@@ -1,0 +1,117 @@
+<div id="loader-operacional" class="loader-container" style="display: none; height: 40vh;">
+  <div class="spinner-border" style="width: 3rem; height: 3rem; color: #0288D1;" role="status"></div>
+  <h5 class="mt-3" style="color: var(--t2); font-weight: 700;">Solicitando Dados Operacionais sob demanda...</h5>
+  <p style="font-size: 12px; color: var(--t3);">Carregando histórico em alta granularidade (Hora a Hora).</p>
+</div>
+
+<div id="operacional-view" style="display: none;">
+  
+  <div class="filters-operacional">
+    <div class="fg">
+      <span class="fl" style="color: var(--or-dk);">Semana Âncora (W0)</span>
+      <select id="op-semana" class="srch" style="border-color: var(--or-dk); font-weight: bold;" onchange="processarOperacional()"></select>
+    </div>
+    
+    <div class="fg dropdown">
+      <span class="fl">Intenção (Use Case)</span>
+      <button class="btn btn-multi-select dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" id="btn-op-use-case">Todos selecionados</button>
+      <ul class="dropdown-menu dropdown-menu-custom p-3" id="lista-op-use-cases">
+        <!-- Injetado pelo JS -->
+      </ul>
+    </div>
+
+    <div class="fg dropdown">
+      <span class="fl">Tipo Venda</span>
+      <button class="btn btn-multi-select dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" id="btn-op-tipo-venda">Todos selecionados</button>
+      <ul class="dropdown-menu dropdown-menu-custom p-3">
+        <li><div class="form-check"><input class="form-check-input chk-op-tipo-venda" type="checkbox" value="1P" id="op-tv1" checked onchange="atualizarTextoMultiSelectOp('chk-op-tipo-venda', 'btn-op-tipo-venda')"><label class="form-check-label" for="op-tv1">1P</label></div></li>
+        <li><div class="form-check"><input class="form-check-input chk-op-tipo-venda" type="checkbox" value="3P" id="op-tv2" checked onchange="atualizarTextoMultiSelectOp('chk-op-tipo-venda', 'btn-op-tipo-venda')"><label class="form-check-label" for="op-tv2">3P</label></div></li>
+        <li><div class="form-check"><input class="form-check-input chk-op-tipo-venda" type="checkbox" value="null" id="op-tv3" checked onchange="atualizarTextoMultiSelectOp('chk-op-tipo-venda', 'btn-op-tipo-venda')"><label class="form-check-label text-muted" for="op-tv3">N/A</label></div></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="ccard mb-3">
+    <div class="ct">
+      <div><i class="bi bi-graph-up"></i> Coorte Horária Semanal (W0 vs Histórico)</div>
+      <div class="ctl"></div>
+      <div class="btn-group" role="group">
+        <button type="button" class="btn btn-outline-secondary btn-sm active" style="font-size: 11px;" id="btn-tg-ret" onclick="mudarToggleMetrica('ret')">% Retenção HA</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" style="font-size: 11px;" id="btn-tg-vol" onclick="mudarToggleMetrica('vol')">Volume HA</button>
+      </div>
+    </div>
+    
+    <!-- Legenda Atualizada com Texturas Visuais -->
+    <div class="d-flex justify-content-center flex-wrap mb-3" style="gap: 15px;">
+      <div class="d-flex align-items-center" style="gap: 5px; font-size: 11px; font-weight: 700; color: var(--t2);">
+        <span style="display: inline-block; width: 14px; height: 4px; border-radius: 2px; background: var(--op-w0);"></span> Semana W0 (Âncora)
+      </div>
+      <div class="d-flex align-items-center" style="gap: 5px; font-size: 11px; font-weight: 700; color: var(--t2);">
+        <span style="position: relative; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 10px;"><span style="position: absolute; width: 100%; height: 2px; background: var(--op-w1);"></span><span style="position: relative; width: 6px; height: 6px; background: var(--op-w1); border-radius: 50%;"></span></span> Semana W-1
+      </div>
+      <div class="d-flex align-items-center" style="gap: 5px; font-size: 11px; font-weight: 700; color: var(--t2);">
+        <span style="display: inline-block; width: 16px; height: 0px; border-top: 2px dashed var(--op-w2);"></span> Semana W-2
+      </div>
+      <div class="d-flex align-items-center" style="gap: 5px; font-size: 11px; font-weight: 700; color: var(--t2);">
+        <span style="display: inline-block; width: 16px; height: 0px; border-top: 2px dotted var(--op-w3);"></span> Semana W-3
+      </div>
+    </div>
+
+    <div class="operacional-grid" id="container-mini-charts"></div>
+  </div>
+
+  <div class="ccard mb-3" style="position: relative;">
+    <i class="bi bi-zoom-in zoom-icon" style="top: 15px; right: 18px; font-size: 18px;" onclick="abrirModalHeatmap()" title="Expandir Matriz"></i>
+    <div class="ct">
+      <div><i class="bi bi-grid-3x3-gap-fill"></i> Matriz de Saturação Operacional (Heatmap W0) - <span id="lbl-heatmap-metric" style="color: var(--or); margin-left: 5px;">% Retenção HA</span></div>
+      <div class="ctl"></div>
+      
+      <div class="btn-group" role="group" style="margin-right: 35px;">
+        <button type="button" class="btn btn-outline-secondary btn-sm active" style="font-size: 11px;" id="btn-hm-ret" onclick="mudarToggleHeatmap('ret')">% Retenção HA</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" style="font-size: 11px;" id="btn-hm-vol" onclick="mudarToggleHeatmap('vol')">Volume HA</button>
+      </div>
+    </div>
+    
+    <div class="table-responsive mt-2">
+      <table class="heatmap-table" id="heatmap-tabela"></table>
+    </div>
+  </div>
+
+  <!-- Modal 1: Gráfico de Linhas Expandido -->
+  <div id="modal-grafico" class="modal-overlay" style="display: none;">
+    <div class="modal-content-box">
+      <button class="modal-close" onclick="fecharModalGrafico()"><i class="bi bi-x-lg"></i></button>
+      <div class="mini-chart-title" id="modal-grafico-titulo" style="font-size: 18px; color: var(--or);">TITULO</div>
+      
+      <!-- Legenda Atualizada no Modal -->
+      <div class="d-flex justify-content-center flex-wrap mt-2 mb-3" style="gap: 15px;">
+        <div class="d-flex align-items-center" style="gap: 5px; font-size: 11px; font-weight: 700; color: var(--t2);">
+          <span style="display: inline-block; width: 14px; height: 4px; border-radius: 2px; background: var(--op-w0);"></span> Semana W0 (Âncora)
+        </div>
+        <div class="d-flex align-items-center" style="gap: 5px; font-size: 11px; font-weight: 700; color: var(--t2);">
+          <span style="position: relative; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 10px;"><span style="position: absolute; width: 100%; height: 2px; background: var(--op-w1);"></span><span style="position: relative; width: 6px; height: 6px; background: var(--op-w1); border-radius: 50%;"></span></span> Semana W-1
+        </div>
+        <div class="d-flex align-items-center" style="gap: 5px; font-size: 11px; font-weight: 700; color: var(--t2);">
+          <span style="display: inline-block; width: 16px; height: 0px; border-top: 2px dashed var(--op-w2);"></span> Semana W-2
+        </div>
+        <div class="d-flex align-items-center" style="gap: 5px; font-size: 11px; font-weight: 700; color: var(--t2);">
+          <span style="display: inline-block; width: 16px; height: 0px; border-top: 2px dotted var(--op-w3);"></span> Semana W-3
+        </div>
+      </div>
+
+      <div id="modal-grafico-body" style="flex: 1; width: 100%; height: 100%;"></div>
+    </div>
+  </div>
+
+  <!-- Modal 2: Heatmap Expandido -->
+  <div id="modal-heatmap" class="modal-overlay" style="display: none;">
+    <div class="modal-content-box" style="height: auto; max-height: 95vh;">
+      <button class="modal-close" onclick="fecharModalHeatmap()"><i class="bi bi-x-lg"></i></button>
+      <div class="mini-chart-title" id="modal-heatmap-titulo" style="font-size: 18px; color: var(--or); margin-bottom: 20px;">MATRIZ DE SATURAÇÃO OPERACIONAL</div>
+      <div class="table-responsive" style="flex: 1; overflow-y: auto;">
+        <table class="heatmap-table modal-heatmap-table" id="modal-heatmap-body"></table>
+      </div>
+    </div>
+  </div>
+
+</div>

@@ -1,0 +1,274 @@
+<script>
+  function processarFiltrosEAtualizarDash() {
+    const dtInicio = document.getElementById('filtro-inicio').value;
+    const dtFim = document.getElementById('filtro-fim').value;
+    const fSemana = document.getElementById('filtro-semana').value;
+    
+    const arrUseCases = getValoresChecados('chk-use-case');
+    const arrTipoVenda = getValoresChecados('chk-tipo-venda');
+
+    dadosAtuais = []; 
+
+    baseGlobal.forEach(row => {
+      let rowUseCase = row.use_case || 'null';
+      let rowTipoVenda = row.tipo_venda || 'null';
+      
+      if (!arrUseCases.includes(rowUseCase)) return;
+      if (!arrTipoVenda.includes(rowTipoVenda)) return;
+
+      let ehAtual = false;
+      if (fSemana && row.conversation_start_week === fSemana) ehAtual = true;
+      else if (!fSemana && dtInicio && dtFim && row.conversation_start_date_br >= dtInicio && row.conversation_start_date_br <= dtFim) ehAtual = true;
+      
+      if (ehAtual) dadosAtuais.push(row);
+    });
+
+    renderizarKPIsMacro();
+    renderizarGraficoEvolucao();
+  }
+
+  function calcularResumo(dataset) {
+    let r = { volTotal: 0, volHA: 0, retHA: 0, prom: 0, resp: 0 };
+    dataset.forEach(row => {
+      let conv = parseInt(row.qtd_conversas) || 0;
+      r.volTotal += conv;
+      if (row.horario_atendimento === 'Dentro do horário Atendimento') {
+        r.volHA += conv;
+        if (row.retido === 'Sim') r.retHA += conv;
+      }
+      r.prom += parseInt(row.sum_promotores_bsat) || 0;
+      r.resp += parseInt(row.qtd_respostas_bsat) || 0;
+    });
+    r.txRet = r.volHA > 0 ? (r.retHA / r.volHA) * 100 : 0;
+    r.txBsat = r.resp > 0 ? (r.prom / r.resp) * 100 : 0;
+    return r;
+  }
+
+  function renderizarKPIsMacro() {
+    let cur = calcularResumo(dadosAtuais);
+    document.getElementById('kpi-volume-total').innerText = cur.volTotal.toLocaleString('pt-BR');
+    document.getElementById('kpi-volume-ha').innerText = cur.volHA.toLocaleString('pt-BR');
+    document.getElementById('kpi-retido-ha').innerText = cur.retHA.toLocaleString('pt-BR');
+    document.getElementById('kpi-retencao-ha').innerText = cur.txRet.toFixed(1) + '%';
+    document.getElementById('kpi-bsat').innerText = cur.resp > 0 ? cur.txBsat.toFixed(1) + '%' : '-';
+  }
+
+  function mudarGranularidadeGrafico(tipo) {
+    document.getElementById('btn-chart-day').classList.remove('active');
+    document.getElementById('btn-chart-week').classList.remove('active');
+    document.getElementById('btn-chart-month').classList.remove('active');
+    document.getElementById('btn-chart-' + tipo).classList.add('active');
+    chartGranularity = tipo;
+    renderizarGraficoEvolucao();
+  }
+
+  function renderizarGraficoEvolucao() {
+    if(!google.visualization) return;
+    let agrupamento = {};
+
+    dadosAtuais.forEach(row => {
+      if(row.horario_atendimento !== 'Dentro do horário Atendimento') return;
+      let chave = row.conversation_start_date_br; 
+      if (chartGranularity === 'week') chave = row.conversation_start_week;
+      if (chartGranularity === 'month') chave = row.conversation_start_month;
+
+      if(!agrupamento[chave]) agrupamento[chave] = { volHA: 0, retHA: 0 };
+      let conv = parseInt(row.qtd_conversas) || 0;
+      agrupamento[chave].volHA += conv;
+      if(row.retido === 'Sim') agrupamento[chave].retHA += conv;
+    });
+
+    let chavesOrdernadas = Object.keys(agrupamento).sort();
+    let chartData = [['Período', 'Volume HA', '% Retenção', { role: 'annotation' }]];
+
+    chavesOrdernadas.forEach(c => {
+      let tx = agrupamento[c].volHA > 0 ? (agrupamento[c].retHA / agrupamento[c].volHA) : 0;
+      let annotation = (tx * 100).toFixed(1) + '%';
+      chartData.push([c, agrupamento[c].volHA, tx, annotation]);
+    });
+
+    if(chartData.length <= 1) { document.getElementById('chart_div').innerHTML = '<p class="text-center mt-5 text-muted">Sem dados HA no período para plotar gráfico.</p>'; return; }
+
+    let dataTable = google.visualization.arrayToDataTable(chartData);
+    let formatter = new google.visualization.NumberFormat({pattern: '#,##0.0%'});
+    formatter.format(dataTable, 2);
+
+    let options = {
+      legend: { position: 'top', textStyle: {color: '#555566'} },
+      colors: ['#E5E5EA', '#FF6B00'],
+      seriesType: 'bars',
+      series: { 
+         0: { type: 'bars', targetAxisIndex: 0 },
+         1: { type: 'line', targetAxisIndex: 1, lineWidth: 3, pointSize: 5 } 
+      },
+      vAxes: {
+        0: { title: 'Volume', textStyle: { color: '#9999AA' }, gridlines: {color: '#F5F5F7'}, viewWindow: { min: 0 } },
+        1: { title: '% Ret', format: '#%', textStyle: { color: '#FF6B00' }, gridlines: {color: 'transparent'}, viewWindow: { min: 0 } }
+      },
+      hAxis: { textStyle: { color: '#9999AA' } },
+      chartArea: { width: '85%', height: '60%', top: 40 }, 
+      backgroundColor: 'transparent',
+      annotations: { alwaysOutside: true, textStyle: { fontSize: 11, bold: true, color: '#FF6B00' }, stem: { color: 'transparent' } }
+    };
+
+    let chart = new google.visualization.ComboChart(document.getElementById('chart_div'));
+    chart.draw(dataTable, options);
+  }
+
+  function getSemanaAnterior(semanaFormat) {
+    if(!semanaFormat) return null;
+    let p = semanaFormat.split('-W');
+    let year = parseInt(p[0]); let w = parseInt(p[1]);
+    if(w === 1) return (year - 1) + '-W52';
+    let prevW = w - 1;
+    return year + '-W' + (prevW < 10 ? '0'+prevW : prevW);
+  }
+
+  function getCurrentISOWeek() {
+    let today = new Date();
+    let dayNum = today.getDay() || 7;
+    today.setDate(today.getDate() + 4 - dayNum);
+    let yearStart = new Date(today.getFullYear(), 0, 1);
+    let weekNo = Math.ceil((((today - yearStart) / 86400000) + 1) / 7);
+    return today.getFullYear() + '-W' + String(weekNo).padStart(2, '0');
+  }
+
+  function processarTabelaFixaSemFiltros() {
+    let w0 = getCurrentISOWeek(); 
+    let w1 = getSemanaAnterior(w0);
+    let w2 = getSemanaAnterior(w1);
+
+    document.getElementById('titulo-tabela-fixa').innerHTML = 
+      `<i class="bi bi-table" style="color: var(--or); font-size: 16px;"></i> Últimas semanas consolidadas (${w1.split('-')[1]} Vs ${w2.split('-')[1]})`;
+
+    let stats = {};
+    let tW1_VolTot=0, tW1_VolHA=0, tW1_RetHA=0, tW1_Prom=0, tW1_Resp=0;
+    let tW2_VolTot=0, tW2_VolHA=0, tW2_RetHA=0, tW2_Prom=0, tW2_Resp=0;
+
+    baseGlobal.forEach(row => {
+      let wk = row.conversation_start_week;
+      if(wk !== w1 && wk !== w2) return;
+
+      let uc = row.use_case || 'sem use case';
+      if (!stats[uc]) stats[uc] = { 
+        w1_VolTot:0, w1_VolHA:0, w1_RetHA:0, w1_Prom:0, w1_Resp:0, 
+        w2_VolTot:0, w2_VolHA:0, w2_RetHA:0, w2_Prom:0, w2_Resp:0 
+      };
+
+      let c = parseInt(row.qtd_conversas) || 0;
+      let isHA = row.horario_atendimento === 'Dentro do horário Atendimento';
+      let isRet = row.retido === 'Sim';
+      let prom = parseInt(row.sum_promotores_bsat) || 0;
+      let resp = parseInt(row.qtd_respostas_bsat) || 0;
+
+      if (wk === w1) {
+        stats[uc].w1_VolTot += c; tW1_VolTot += c;
+        stats[uc].w1_Prom += prom; tW1_Prom += prom;
+        stats[uc].w1_Resp += resp; tW1_Resp += resp;
+        if (isHA) {
+          stats[uc].w1_VolHA += c; tW1_VolHA += c;
+          if (isRet) { stats[uc].w1_RetHA += c; tW1_RetHA += c; }
+        }
+      } else if (wk === w2) {
+        stats[uc].w2_VolTot += c; tW2_VolTot += c;
+        stats[uc].w2_Prom += prom; tW2_Prom += prom;
+        stats[uc].w2_Resp += resp; tW2_Resp += resp;
+        if (isHA) {
+          stats[uc].w2_VolHA += c; tW2_VolHA += c;
+          if (isRet) { stats[uc].w2_RetHA += c; tW2_RetHA += c; }
+        }
+      }
+    });
+
+    let tableArr = Object.keys(stats).map(uc => {
+      let d = stats[uc];
+      let txRetW1 = d.w1_VolHA > 0 ? (d.w1_RetHA / d.w1_VolHA) : 0;
+      let txBsatW1 = d.w1_Resp > 0 ? (d.w1_Prom / d.w1_Resp) : 0;
+      let shareVolW1 = tW1_VolHA > 0 ? (d.w1_VolHA / tW1_VolHA) : 0;
+      let shareRetW1 = tW1_RetHA > 0 ? (d.w1_RetHA / tW1_RetHA) : 0;
+      let shareBsatW1 = tW1_Resp > 0 ? (d.w1_Resp / tW1_Resp) : 0;
+      
+      let txRetW2 = d.w2_VolHA > 0 ? (d.w2_RetHA / d.w2_VolHA) : 0;
+      let txBsatW2 = d.w2_Resp > 0 ? (d.w2_Prom / d.w2_Resp) : 0;
+      let shareVolW2 = tW2_VolHA > 0 ? (d.w2_VolHA / tW2_VolHA) : 0;
+      let shareBsatW2 = tW2_Resp > 0 ? (d.w2_Resp / tW2_Resp) : 0;
+
+      let wowRet = (txRetW1 - txRetW2) * 100;
+      let wowBsat = (txBsatW1 - txBsatW2) * 100;
+      let bridgeRet = ((txRetW1 * shareVolW1) - (txRetW2 * shareVolW2)) * 100;
+      let bridgeBsat = ((txBsatW1 * shareBsatW1) - (txBsatW2 * shareBsatW2)) * 100;
+      
+      let wowVolHA = d.w2_VolHA > 0 ? ((d.w1_VolHA - d.w2_VolHA) / d.w2_VolHA) * 100 : (d.w1_VolHA > 0 ? 100 : 0);
+      let bridgeVolHA = tW2_VolHA > 0 ? ((d.w1_VolHA - d.w2_VolHA) / tW2_VolHA) * 100 : 0;
+
+      return { 
+        nome: uc, volTotW1: d.w1_VolTot, volHAW1: d.w1_VolHA, shareVolW1: shareVolW1 * 100, wowVolHA: wowVolHA, bridgeVolHA: bridgeVolHA,
+        retHAW1: d.w1_RetHA, shareRetW1: shareRetW1 * 100, txRetW1: txRetW1 * 100, wowRet: wowRet, bridgeRet: bridgeRet, 
+        respW1: d.w1_Resp, txBsatW1: txBsatW1 * 100, wowBsat: (d.w1_Resp > 0 && d.w2_Resp > 0) ? wowBsat : null, bridgeBsat: bridgeBsat 
+      };
+    });
+
+    tableArr.sort((a, b) => b.volTotW1 - a.volTotW1);
+
+    let html = '';
+    let totBridgeRet = 0, totBridgeBsat = 0, totBridgeVolHA = 0;
+
+    tableArr.forEach(i => {
+      if(i.volTotW1 === 0 && i.volHAW1 === 0) return; 
+      totBridgeRet += i.bridgeRet;
+      totBridgeBsat += i.bridgeBsat;
+      totBridgeVolHA += i.bridgeVolHA;
+
+      let barVol = `<div class="bar-container"><div class="bar-fill vol" style="width: ${i.shareVolW1}%"></div></div>`;
+      let barRet = `<div class="bar-container"><div class="bar-fill ret" style="width: ${i.txRetW1}%"></div></div>`;
+
+      html += `
+        <tr>
+          <td class="ps-3 text-start fw-bold text-dark text-capitalize">${i.nome}</td>
+          <td class="text-center">${i.volTotW1.toLocaleString('pt-BR')}</td>
+          <td class="text-end">${i.volHAW1.toLocaleString('pt-BR')} <span style="color: var(--t3); font-size: 11px;">(${i.shareVolW1.toFixed(1)}%)</span> ${barVol}</td>
+          <td class="text-center" style="background-color: rgba(245, 245, 247, 0.5);">${colorTxtGlobal(i.wowVolHA, false)}</td>
+          <td class="text-center fw-bold" style="background-color: #f1f3f4; border-left: 1px solid var(--bdr);">${colorTxtGlobal(i.bridgeVolHA, false)}</td>
+          <td class="text-center">${i.retHAW1.toLocaleString('pt-BR')} <span style="color: var(--t3); font-size: 11px;">(${i.shareRetW1.toFixed(1)}%)</span></td>
+          <td class="text-end fw-bold" style="color: var(--t1);">${i.txRetW1.toFixed(1)}% ${barRet}</td>
+          <td class="text-center">${colorTxtGlobal(i.wowRet)}</td>
+          <td class="text-center fw-bold" style="background-color: #f1f3f4; border-left: 1px solid var(--bdr);">${colorTxtGlobal(i.bridgeRet)}</td>
+          <td class="text-center">${i.respW1.toLocaleString('pt-BR')}</td>
+          <td class="text-center fw-bold">${i.respW1 > 0 ? i.txBsatW1.toFixed(1) + '%' : '-'}</td>
+          <td class="text-center">${colorTxtGlobal(i.wowBsat)}</td>
+          <td class="text-center pe-3 fw-bold" style="background-color: #f1f3f4; border-left: 1px solid var(--bdr);">${colorTxtGlobal(i.bridgeBsat)}</td>
+        </tr>
+      `;
+    });
+
+    if(html === '') { html = '<tr><td colspan="13" class="text-center py-4" style="color: var(--t2);">Sem dados disponíveis.</td></tr>'; }
+    else {
+      let txRetTotW1 = tW1_VolHA > 0 ? (tW1_RetHA/tW1_VolHA)*100 : 0;
+      let txRetTotW2 = tW2_VolHA > 0 ? (tW2_RetHA/tW2_VolHA)*100 : 0;
+      let bsatTotW1 = tW1_Resp > 0 ? (tW1_Prom/tW1_Resp)*100 : 0;
+      let bsatTotW2 = tW2_Resp > 0 ? (tW2_Prom/tW2_Resp)*100 : 0;
+      let wowRetTot = txRetTotW1 - txRetTotW2;
+      let wowBsatTot = (tW1_Resp > 0 && tW2_Resp > 0) ? bsatTotW1 - bsatTotW2 : null;
+      let wowVolHATot = tW2_VolHA > 0 ? ((tW1_VolHA - tW2_VolHA)/tW2_VolHA)*100 : 0;
+
+      html += `
+        <tr style="background-color: #fff9f5; font-weight: 900; color: var(--t1); text-transform: uppercase;">
+          <td class="ps-3 text-start border-0">TOTAL GERAL</td>
+          <td class="text-center border-0">${tW1_VolTot.toLocaleString('pt-BR')}</td>
+          <td class="text-end border-0">${tW1_VolHA.toLocaleString('pt-BR')} <span style="color: var(--t3); font-size: 11px;">(100%)</span></td>
+          <td class="text-center border-0">${colorTxtGlobal(wowVolHATot, false)}</td>
+          <td class="text-center border-0" style="background-color: #f1f3f4; border-left: 1px solid var(--bdr);">${colorTxtGlobal(totBridgeVolHA, false)}</td>
+          <td class="text-center border-0">${tW1_RetHA.toLocaleString('pt-BR')} <span style="color: var(--t3); font-size: 11px;">(100%)</span></td>
+          <td class="text-end border-0" style="color: var(--or);">${txRetTotW1.toFixed(1)}%</td>
+          <td class="text-center border-0">${colorTxtGlobal(wowRetTot)}</td>
+          <td class="text-center border-0" style="background-color: #f1f3f4; border-left: 1px solid var(--bdr);">${colorTxtGlobal(totBridgeRet)}</td>
+          <td class="text-center border-0">${tW1_Resp.toLocaleString('pt-BR')}</td>
+          <td class="text-center border-0">${bsatTotW1.toFixed(1)}%</td>
+          <td class="text-center border-0">${colorTxtGlobal(wowBsatTot)}</td>
+          <td class="text-center pe-3 border-0" style="background-color: #f1f3f4; border-left: 1px solid var(--bdr);">${colorTxtGlobal(totBridgeBsat)}</td>
+        </tr>
+      `;
+    }
+    document.getElementById('tbody-tabela-fixa').innerHTML = html;
+  }
+</script>

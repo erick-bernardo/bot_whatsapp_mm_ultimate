@@ -1,0 +1,160 @@
+<script>
+  // Memória local isolada para os dados da aba de exportação
+  let baseDetalhadaCache = [];
+  let isAbaDadosInicializada = false;
+
+  // Função auxiliar para converter datas de forma segura sem problemas de fuso horário
+  function formatarDataISO(dateObj) {
+    let m = '' + (dateObj.getMonth() + 1);
+    let d = '' + dateObj.getDate();
+    let y = dateObj.getFullYear();
+    if (m.length < 2) m = '0' + m;
+    if (d.length < 2) d = '0' + d;
+    return [y, m, d].join('-');
+  }
+
+  // Acionado via Lazy Loading pelo script_global.html
+  function inicializarAbaDados() {
+    if(isAbaDadosInicializada) return;
+
+    let hoje = new Date();
+    let diaSemana = hoje.getDay() || 7; // Ajuste para considerar 1 = Segunda, 7 = Domingo
+    
+    let dtIni = new Date(hoje);
+    // Subtrai os dias para chegar na segunda-feira da semana atual e subtrai mais 7 para iniciar na segunda da W-1
+    dtIni.setDate(hoje.getDate() - diaSemana + 1 - 7);
+    
+    let dtFim = new Date(hoje); // dtFim será hoje (W0)
+
+    document.getElementById('dd-inicio').value = formatarDataISO(dtIni);
+    document.getElementById('dd-fim').value = formatarDataISO(dtFim);
+
+    // Dispara a consulta para popular a tela e o Cache
+    consultarBaseDetalhada();
+    
+    isAbaDadosInicializada = true;
+  }
+
+  function consultarBaseDetalhada() {
+    const dtIni = document.getElementById('dd-inicio').value;
+    const dtFim = document.getElementById('dd-fim').value;
+
+    if(!dtIni || !dtFim) {
+      alert("Por favor, selecione a Data de Início e a Data Fim.");
+      return;
+    }
+
+    const d1 = new Date(dtIni + "T00:00:00");
+    const d2 = new Date(dtFim + "T00:00:00");
+    const diffTime = Math.abs(d2 - d1);
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    // TRAVA DE SEGURANÇA (MÁX 31 DIAS)
+    if (diffDays > 31) {
+      alert("O período selecionado excede 31 dias.\nPara não travar o seu painel e o servidor, exporte fatias menores de até 1 mês por vez.");
+      return;
+    }
+    if (d1 > d2) {
+      alert("A Data Inicial não pode ser maior que a Data Final.");
+      return;
+    }
+
+    // Aciona os Loaders
+    document.getElementById('dados-view').style.display = 'none';
+    document.getElementById('loader-dados').style.display = 'flex';
+
+    // Chama o servidor para bater no BigQuery
+    google.script.run
+      .withSuccessHandler(renderizarTabelaDados)
+      .withFailureHandler(function(err){
+         document.getElementById('loader-dados').innerHTML = `<div class="alert alert-danger shadow-sm">❌ Erro na extração do banco de dados: ${err}</div>`;
+      })
+      .extraiBaseDetalhada(dtIni, dtFim);
+  }
+
+  function renderizarTabelaDados(dados) {
+    document.getElementById('loader-dados').style.display = 'none';
+    document.getElementById('dados-view').style.display = 'block';
+
+    if(!dados || dados.length === 0) {
+      document.getElementById('tbody-dados').innerHTML = '<tr><td colspan="9" class="text-center py-5 text-muted">Nenhum dado encontrado para o período selecionado.</td></tr>';
+      document.getElementById('lbl-total-linhas').innerText = '(0 linhas)';
+      baseDetalhadaCache = [];
+      return;
+    }
+
+    // Salva na variável que será usada caso o usuário clique em "Baixar CSV"
+    baseDetalhadaCache = dados;
+    document.getElementById('lbl-total-linhas').innerText = `(${dados.length.toLocaleString('pt-BR')} linhas carregadas na memória)`;
+
+    let html = '';
+    
+    // TRAVA VISUAL (Renderizar máximo de 500 linhas para não congelar o HTML)
+    let limiteRender = Math.min(dados.length, 500); 
+    
+    for(let i = 0; i < limiteRender; i++) {
+      let r = dados[i];
+      let tVendaTxt = r.tipo_venda === 'null' || !r.tipo_venda ? '-' : r.tipo_venda;
+      let gVendaTxt = r.grupo_venda === 'null' || !r.grupo_venda ? '-' : r.grupo_venda;
+      let bsatTxt = r.bsat_score === 'null' || !r.bsat_score ? '-' : r.bsat_score;
+      
+      html += `<tr>
+        <td class="ps-2 fw-bold text-dark text-start">${r.conversation_id}</td>
+        <td class="text-start">${r.conversation_start_time_br}</td>
+        <td class="text-center text-primary">${r.id_pedido_filho}</td>
+        <td class="text-center">${r.retido}</td>
+        <td class="text-start text-capitalize">${r.use_case}</td>
+        <td class="text-center">${r.is_llm_conversation}</td>
+        <td class="text-center fw-bold">${bsatTxt}</td>
+        <td class="text-center">${tVendaTxt}</td>
+        <td class="text-center">${gVendaTxt}</td>
+      </tr>`;
+    }
+    
+    if(dados.length > limiteRender) {
+      html += `<tr><td colspan="9" class="text-center py-3 text-muted fw-bold" style="background: var(--bg);">Tabela de pré-visualização limitada a ${limiteRender} linhas. Clique em "Baixar CSV" para extrair todas as ${dados.length.toLocaleString('pt-BR')} interações.</td></tr>`;
+    }
+
+    document.getElementById('tbody-dados').innerHTML = html;
+  }
+
+  function exportarCSV() {
+    if(baseDetalhadaCache.length === 0) {
+      alert("Não há dados carregados para exportar. Por favor, realize uma busca primeiro.");
+      return;
+    }
+
+    // Montando o arquivo CSV Virtual
+    let csvRows = [];
+    // Cabeçalhos Fixos
+    csvRows.push("conversation_id,conversation_start_time_br,id_pedido_filho,retido,use_case,is_llm_conversation,bsat_score,tipo_venda,grupo_venda");
+    
+    baseDetalhadaCache.forEach(function(r) {
+        // Tratamento para evitar que virgulas ou quebras de linha nas strings quebrem as colunas do CSV
+        let rowArray = [
+          `"${r.conversation_id || ''}"`,
+          `"${r.conversation_start_time_br || ''}"`,
+          `"${r.id_pedido_filho || ''}"`,
+          `"${r.retido || ''}"`,
+          `"${r.use_case || ''}"`,
+          `"${r.is_llm_conversation || ''}"`,
+          `"${r.bsat_score || ''}"`,
+          `"${r.tipo_venda || ''}"`,
+          `"${r.grupo_venda || ''}"`
+        ];
+        csvRows.push(rowArray.join(","));
+    });
+
+    let csvContent = csvRows.join("\n");
+    let blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' }); // \uFEFF Força o Excel a entender acentuação (BOM)
+    let url = URL.createObjectURL(blob);
+    
+    let link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `Base_Detalhada_UltimateBot_${document.getElementById('dd-inicio').value}_ate_${document.getElementById('dd-fim').value}.csv`);
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+</script>

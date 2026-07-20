@@ -1,0 +1,89 @@
+<div class="filters">
+  <div class="fg">
+    <span class="fl">Período</span>
+    <select id="filtro-preset" class="srch" onchange="aplicarDataPreset()">
+      <option value="">Personalizado...</option>
+      <option value="d-7">D-7</option>
+      <option value="this_week">Esta semana</option>
+      <option value="last_8_weeks" selected>Últimas 8 semanas</option>
+      <option value="this_month">Este mês</option>
+      <option value="last_3_months">Últimos 3 meses</option>
+      <option value="last_6_months">Últimos 6 meses</option>
+      <option value="this_year">Este ano</option>
+    </select>
+  </div>
+  <div class="fg"><span class="fl">Data Início</span><input type="date" id="filtro-inicio" class="f-date" onchange="limparCamposConflitantes('data')"></div>
+  <div class="fg"><span class="fl">Data Fim</span><input type="date" id="filtro-fim" class="f-date" onchange="limparCamposConflitantes('data')"></div>
+  <div class="fg">
+    <span class="fl" style="color: var(--or-dk);">Semana Específica</span>
+    <input type="week" id="filtro-semana" class="srch" style="border-color: var(--or-dk);" onchange="limparCamposConflitantes('semana')">
+  </div>
+
+  <div class="fg dropdown">
+    <span class="fl">Intenção (Use Case)</span>
+    <button class="btn btn-multi-select dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" id="btn-use-case">Todos selecionados</button>
+    <ul class="dropdown-menu dropdown-menu-custom p-3" id="lista-use-cases"></ul>
+  </div>
+
+  <div class="fg dropdown">
+    <span class="fl">Tipo Venda</span>
+    <button class="btn btn-multi-select dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" id="btn-tipo-venda">Todos selecionados</button>
+    <ul class="dropdown-menu dropdown-menu-custom p-3">
+      <li><div class="form-check"><input class="form-check-input chk-tipo-venda" type="checkbox" value="1P" id="tv1" checked onchange="atualizarTextoMultiSelect('chk-tipo-venda', 'btn-tipo-venda')"><label class="form-check-label" for="tv1">1P</label></div></li>
+      <li><div class="form-check"><input class="form-check-input chk-tipo-venda" type="checkbox" value="3P" id="tv2" checked onchange="atualizarTextoMultiSelect('chk-tipo-venda', 'btn-tipo-venda')"><label class="form-check-label" for="tv2">3P</label></div></li>
+      <li><div class="form-check"><input class="form-check-input chk-tipo-venda" type="checkbox" value="null" id="tv3" checked onchange="atualizarTextoMultiSelect('chk-tipo-venda', 'btn-tipo-venda')"><label class="form-check-label text-muted" for="tv3">N/A</label></div></li>
+    </ul>
+  </div>
+  <button class="btn-or" onclick="processarFiltrosEAtualizarDash()"><i class="bi bi-arrow-repeat"></i> Atualizar</button>
+</div>
+
+<div class="section-title"><i class="bi bi-bar-chart-steps" style="color: var(--or); font-size: 16px;"></i> Visão consolidada no período</div>
+
+<div class="kgrid">
+  <div class="kcard kc-gy"><div class="kl">Volume Total (CX)</div><div class="kv" id="kpi-volume-total">0</div></div>
+  <div class="kcard kc-bl"><div class="kl">Volume HA (Horário Atend.)</div><div class="kv" id="kpi-volume-ha">0</div></div>
+  <div class="kcard kc-dk"><div class="kl">Vol. Retido (HA)</div><div class="kv" id="kpi-retido-ha">0</div></div>
+  <div class="kcard kc-gr"><div class="kl">% Retenção (Apenas HA)</div><div class="kv" style="color: var(--gr);" id="kpi-retencao-ha">0.0%</div></div>
+  <div class="kcard kc-yw"><div class="kl">% BSAT (Promotores)</div><div class="kv" style="color: var(--yw);" id="kpi-bsat">0.0%</div></div>
+</div>
+
+<div class="cgrid-full">
+  <div class="ccard">
+    <div class="ct">📈 Evolução de Retenção x Volume (HA)
+      <div class="btn-group ms-2" role="group">
+        <button type="button" class="btn btn-outline-secondary btn-sm" style="font-size: 11px;" id="btn-chart-day" onclick="mudarGranularidadeGrafico('day')">Dia</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm active" style="font-size: 11px;" id="btn-chart-week" onclick="mudarGranularidadeGrafico('week')">Semana</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" style="font-size: 11px;" id="btn-chart-month" onclick="mudarGranularidadeGrafico('month')">Mês</button>
+      </div>
+    </div>
+    <div style="width: 100%; height: 350px;"><div id="chart_div" style="width: 100%; height: 100%;"></div></div>
+  </div>
+</div>
+
+<div class="section-title mt-4" id="titulo-tabela-fixa"><i class="bi bi-table" style="color: var(--or); font-size: 16px;"></i> Últimas semanas consolidadas (W-1 Vs W-2)</div>
+<div class="cgrid-full">
+  <div class="ccard" style="padding: 0; overflow: hidden; border-color: var(--or);">
+    <div class="table-responsive" style="padding: 0;">
+      <table class="table table-hover table-fixa align-middle mb-0">
+        <thead style="background-color: #fff9f5;">
+          <tr>
+            <th class="ps-3 text-start">CASO DE USO</th>
+            <th class="text-center">VOL. TOTAL W-1</th>
+            <th class="text-end">VOL. HA (% SHARE)</th>
+            <th class="text-center">VOL. HA WOW</th>
+            <th class="text-center" style="background-color: #f1f3f4; border-left: 1px solid var(--bdr);">BRIDGE VOL</th>
+            <th class="text-center">RETIDO HA (% SHARE)</th>
+            <th class="text-end">% RETENÇÃO</th>
+            <th class="text-center">WOW p.p</th>
+            <th class="text-center" style="background-color: #f1f3f4; border-left: 1px solid var(--bdr);">BRIDGE RET</th>
+            <th class="text-center">RESP. BSAT</th>
+            <th class="text-center">% BSAT</th>
+            <th class="text-center">BSAT WOW P.P</th>
+            <th class="text-center pe-3" style="background-color: #f1f3f4; border-left: 1px solid var(--bdr);">BRIDGE BSAT</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-tabela-fixa"></tbody>
+      </table>
+    </div>
+  </div>
+</div>

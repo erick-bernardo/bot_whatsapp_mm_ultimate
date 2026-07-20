@@ -1,0 +1,191 @@
+<script>
+  // ==============================================================================
+  // 1. CONFIGURAÇÕES INICIAIS E VARIÁVEIS DE MEMÓRIA GLOBAIS
+  // ==============================================================================
+  google.charts.load('current', {'packages':['corechart']});
+  google.charts.setOnLoadCallback(iniciarRequisicaoGoogleScript);
+
+  let baseGlobal = [];      
+  let baseOperacional = []; 
+  
+  // Variáveis da Aba Gerencial
+  let dadosAtuais = [];
+  let chartGranularity = 'week';
+
+  // Variáveis da Aba Operacional (Estados Independentes)
+  let opMetricaChart = 'ret'; 
+  let opMetricaHeatmap = 'ret'; 
+  
+  let opTableData = [];
+  let opSortCol = 'volHA';
+  let opSortAsc = false;
+
+  window.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => {
+      const splash = document.getElementById('splash-screen');
+      splash.style.opacity = '0';
+      setTimeout(() => splash.style.display = 'none', 500);
+    }, 2500);
+  });
+
+  // ==============================================================================
+  // 2. TOGGLE DA SIDEBAR E RESPONSIVIDADE
+  // ==============================================================================
+  function toggleSidebar() {
+    if (window.innerWidth <= 992) {
+      document.body.classList.toggle('sidebar-open');
+    } else {
+      document.body.classList.toggle('sidebar-closed');
+    }
+  }
+
+  // ==============================================================================
+  // 3. CARGA INICIAL (ABA GERENCIAL)
+  // ==============================================================================
+  function iniciarRequisicaoGoogleScript() {
+    google.script.run
+      .withSuccessHandler(iniciarDashboard)
+      .withFailureHandler(exibirErro)
+      .extraiBaseAgrupada(); 
+  }
+
+  function iniciarDashboard(dados) {
+    if (!dados || dados.length === 0) { exibirErro("A base gerencial retornou vazia."); return; }
+    baseGlobal = dados;
+    
+    preencherFiltroUseCases();
+
+    document.getElementById('loader').style.display = 'none';
+    document.getElementById('dashboard-content').style.display = 'block';
+    
+    processarTabelaFixaSemFiltros();
+    aplicarDataPreset('last_8_weeks'); 
+  }
+
+  function preencherFiltroUseCases() {
+    let ucs = [...new Set(baseGlobal.map(r => r.use_case || 'null'))].sort();
+    let html = '';
+    ucs.forEach((uc, idx) => {
+      let display = uc === 'null' ? 'Não Identificado' : uc;
+      html += `<li><div class="form-check"><input class="form-check-input chk-use-case" type="checkbox" value="${uc}" id="uc_din_${idx}" checked onchange="atualizarTextoMultiSelect('chk-use-case', 'btn-use-case')"><label class="form-check-label text-capitalize" for="uc_din_${idx}">${display}</label></div></li>`;
+    });
+    document.getElementById('lista-use-cases').innerHTML = html;
+  }
+
+  // ==============================================================================
+  // 4. ROTEADOR DE ABAS (LAZY LOADING)
+  // ==============================================================================
+  function alternarAba(aba, el) {
+    document.querySelectorAll('.nav-item').forEach(e => e.classList.remove('active'));
+    if(el) el.classList.add('active');
+    
+    // Esconder sidebar no mobile após o clique
+    if (window.innerWidth <= 992) {
+      document.body.classList.remove('sidebar-open');
+    }
+    
+    document.getElementById('conteudo-gerencial').style.display = 'none';
+    document.getElementById('conteudo-operacional').style.display = 'none';
+    document.getElementById('conteudo-dados').style.display = 'none';
+
+    if (aba === 'gerencial') {
+      document.getElementById('conteudo-gerencial').style.display = 'block';
+    } 
+    else if (aba === 'operacional') {
+      document.getElementById('conteudo-operacional').style.display = 'block';
+      
+      if (baseOperacional.length === 0) {
+        document.getElementById('loader-operacional').style.display = 'flex';
+        document.getElementById('operacional-view').style.display = 'none';
+        
+        google.script.run
+          .withSuccessHandler(function(dados) {
+             if(!dados || dados.length===0){ exibirErro("A base operacional retornou vazia."); return; }
+             baseOperacional = dados;
+             document.getElementById('loader-operacional').style.display = 'none';
+             document.getElementById('operacional-view').style.display = 'block';
+             
+             inicializarFiltrosOperacionais();
+          })
+          .withFailureHandler(function(err) {
+             document.getElementById('loader-operacional').innerHTML = `<div class="alert alert-danger shadow-sm">❌ Erro Operacional: ${err}</div>`;
+          })
+          .extraiBaseOperacional();
+      } else {
+        document.getElementById('operacional-view').style.display = 'block';
+      }
+    } 
+    else if (aba === 'dados') {
+      document.getElementById('conteudo-dados').style.display = 'block';
+    }
+  }
+
+  // ==============================================================================
+  // 5. LÓGICA COMPARTILHADA DE DATAS E UX
+  // ==============================================================================
+  function exibirErro(msg) {
+    document.getElementById('loader').innerHTML = `<div class="alert alert-danger shadow-sm" style="border-left: 4px solid var(--re);">❌ Erro no Painel: ${msg}</div>`;
+  }
+
+  function colorTxtGlobal(val, isRate=true) {
+    if(val === null || isNaN(val)) return '<span style="color: var(--t3);">-</span>';
+    let suffix = isRate ? ' p.p.' : '%';
+    if(Math.abs(val) < 0.1) return `<span style="color: var(--t3);">0.0${suffix}</span>`;
+    let cls = val > 0 ? 'var(--gr)' : 'var(--re)';
+    let sg = val > 0 ? '+' : '';
+    return `<span style="color: ${cls}; font-weight: 800;">${sg}${val.toFixed(1)}${suffix}</span>`;
+  }
+
+  function limparCamposConflitantes(tipoAlterado) {
+    if (tipoAlterado === 'semana') {
+      document.getElementById('filtro-preset').value = '';
+      document.getElementById('filtro-inicio').value = '';
+      document.getElementById('filtro-fim').value = '';
+    } else if (tipoAlterado === 'data') {
+      document.getElementById('filtro-semana').value = '';
+      document.getElementById('filtro-preset').value = '';
+    }
+    processarFiltrosEAtualizarDash();
+  }
+
+  function aplicarDataPreset(forcarPreset = null) {
+    const preset = forcarPreset || document.getElementById('filtro-preset').value;
+    if (!preset) return;
+    document.getElementById('filtro-preset').value = preset;
+    document.getElementById('filtro-semana').value = ''; 
+    
+    const hoje = new Date();
+    let dtFim = new Date(hoje);
+    dtFim.setDate(dtFim.getDate() - 1); 
+    let dtInicio = new Date(dtFim);
+    let dayOfWeek = dtFim.getDay() || 7; 
+    
+    if (preset === 'd-7') { dtInicio.setDate(dtFim.getDate() - 6); } 
+    else if (preset === 'this_week') { dtInicio.setDate(dtFim.getDate() - dayOfWeek + 1); } 
+    else if (preset === 'last_8_weeks') { dtInicio.setDate(dtFim.getDate() - dayOfWeek + 1 - (7 * 7)); } 
+    else if (preset === 'this_month') { dtInicio = new Date(hoje.getFullYear(), hoje.getMonth(), 1); } 
+    else if (preset === 'last_3_months') { dtInicio = new Date(hoje.getFullYear(), hoje.getMonth() - 2, 1); } 
+    else if (preset === 'last_6_months') { dtInicio = new Date(hoje.getFullYear(), hoje.getMonth() - 5, 1); } 
+    else if (preset === 'this_year') { dtInicio = new Date(hoje.getFullYear(), 0, 1); }
+    
+    if (dtFim < dtInicio) { dtFim = new Date(hoje); }
+
+    document.getElementById('filtro-inicio').value = dtInicio.toISOString().split('T')[0];
+    document.getElementById('filtro-fim').value = dtFim.toISOString().split('T')[0];
+    
+    processarFiltrosEAtualizarDash();
+  }
+
+  function getValoresChecados(classe) { return Array.from(document.querySelectorAll('.' + classe + ':checked')).map(cb => cb.value); }
+
+  function atualizarTextoMultiSelect(classeCheckbox, idBotao) {
+    const checados = getValoresChecados(classeCheckbox);
+    const totalPossivel = document.querySelectorAll('.' + classeCheckbox).length;
+    const btn = document.getElementById(idBotao);
+    if (checados.length === 0) btn.innerHTML = `<span style="color: var(--re); font-weight: 800;">Nenhum</span>`;
+    else if (checados.length === totalPossivel) btn.innerHTML = `Todos selecionados`;
+    else if (checados.length <= 2) btn.innerHTML = checados.map(v => v === 'null' ? 'Não Idenf.' : v).join(', ');
+    else btn.innerHTML = `<span style="color: var(--or); font-weight: 800;">${checados.length} selecionados</span>`;
+    processarFiltrosEAtualizarDash();
+  }
+</script>

@@ -1,0 +1,378 @@
+<script>
+  function atualizarTextoMultiSelectOp(classeCheckbox, idBotao) {
+    const checados = getValoresChecados(classeCheckbox);
+    const totalPossivel = document.querySelectorAll('.' + classeCheckbox).length;
+    const btn = document.getElementById(idBotao);
+    if (checados.length === 0) btn.innerHTML = `<span style="color: var(--re); font-weight: 800;">Nenhum</span>`;
+    else if (checados.length === totalPossivel) btn.innerHTML = `Todos selecionados`;
+    else if (checados.length <= 2) btn.innerHTML = checados.map(v => v === 'null' ? 'Não Idenf.' : v).join(', ');
+    else btn.innerHTML = `<span style="color: var(--or); font-weight: 800;">${checados.length} selecionados</span>`;
+    
+    processarOperacional();
+  }
+
+  function inicializarFiltrosOperacionais() {
+    let semanasSet = new Set();
+    let ucasesSet = new Set();
+    baseOperacional.forEach(r => {
+      if(r.conversation_start_week) semanasSet.add(r.conversation_start_week);
+      if(r.use_case) ucasesSet.add(r.use_case);
+    });
+    let semanasOrd = Array.from(semanasSet).sort().reverse();
+    let ucasesOrd = Array.from(ucasesSet).sort();
+
+    let htmlSem = '';
+    semanasOrd.forEach((s, idx) => {
+      let label = idx === 0 ? `${s} (Atual)` : s;
+      htmlSem += `<option value="${s}">${label}</option>`;
+    });
+    document.getElementById('op-semana').innerHTML = htmlSem;
+
+    let htmlUc = '';
+    ucasesOrd.forEach((u, idx) => {
+      let display = u === 'null' ? 'Não Identificado' : u;
+      htmlUc += `<li><div class="form-check"><input class="form-check-input chk-op-use-case" type="checkbox" value="${u}" id="op_uc_din_${idx}" checked onchange="atualizarTextoMultiSelectOp('chk-op-use-case', 'btn-op-use-case')"><label class="form-check-label text-capitalize" for="op_uc_din_${idx}">${display}</label></div></li>`;
+    });
+    document.getElementById('lista-op-use-cases').innerHTML = htmlUc;
+
+    processarOperacional();
+  }
+
+  function subtrairSemanas(weekStr, offset) {
+    if(!weekStr) return null;
+    let p = weekStr.split('-W');
+    let year = parseInt(p[0]); let w = parseInt(p[1]);
+    let targetW = w - offset;
+    if (targetW > 0) return `${year}-W${targetW.toString().padStart(2, '0')}`;
+    return `${year - 1}-W${(52 + targetW).toString().padStart(2, '0')}`;
+  }
+
+  function mudarToggleMetrica(metrica) {
+    document.getElementById('btn-tg-ret').classList.remove('active');
+    document.getElementById('btn-tg-vol').classList.remove('active');
+    document.getElementById(`btn-tg-${metrica}`).classList.add('active');
+    opMetricaChart = metrica;
+    processarOperacional();
+  }
+
+  function mudarToggleHeatmap(metrica) {
+    document.getElementById('btn-hm-ret').classList.remove('active');
+    document.getElementById('btn-hm-vol').classList.remove('active');
+    document.getElementById(`btn-hm-${metrica}`).classList.add('active');
+    opMetricaHeatmap = metrica;
+    processarOperacional();
+  }
+
+  function processarOperacional() {
+    if(baseOperacional.length === 0) return;
+    
+    const semW0 = document.getElementById('op-semana').value;
+    
+    const arrOpUseCases = getValoresChecados('chk-op-use-case');
+    const arrOpTipoVenda = getValoresChecados('chk-op-tipo-venda');
+
+    const semW1 = subtrairSemanas(semW0, 1);
+    const semW2 = subtrairSemanas(semW0, 2);
+    const semW3 = subtrairSemanas(semW0, 3);
+    const arraySemanasValidas = [semW0, semW1, semW2, semW3];
+
+    let maxDateBr = '2000-01-01';
+    let maxHora = -1;
+    let maxWeekGlobal = '2000-W00'; 
+
+    baseOperacional.forEach(r => {
+      if (r.conversation_start_week > maxWeekGlobal) maxWeekGlobal = r.conversation_start_week;
+
+      if(r.conversation_start_date_br > maxDateBr) {
+        maxDateBr = r.conversation_start_date_br;
+        maxHora = parseInt(r.conversation_start_hora) || 0;
+      } else if (r.conversation_start_date_br === maxDateBr) {
+        let h = parseInt(r.conversation_start_hora) || 0;
+        if(h > maxHora) maxHora = h;
+      }
+    });
+    
+    let maxDateObj = new Date(maxDateBr + "T00:00:00");
+    let maxDiaSemana = maxDateObj.getDay();
+
+    let isCurrentWeek = (semW0 === maxWeekGlobal);
+
+    let dadosFiltrados = baseOperacional.filter(r => {
+      if(!arraySemanasValidas.includes(r.conversation_start_week)) return false;
+      
+      let rowUseCase = r.use_case || 'null';
+      let rowTipoVenda = r.tipo_venda || 'null';
+      if (!arrOpUseCases.includes(rowUseCase)) return false;
+      if (!arrOpTipoVenda.includes(rowTipoVenda)) return false;
+      
+      return true;
+    });
+
+    let gridData = {}; 
+    for(let i=0; i<=6; i++) {
+      gridData[i] = { W0:{v:Array(24).fill(0), r:Array(24).fill(0), t:Array(24).fill(0)}, 
+                      W1:{v:Array(24).fill(0), r:Array(24).fill(0), t:Array(24).fill(0)}, 
+                      W2:{v:Array(24).fill(0), r:Array(24).fill(0), t:Array(24).fill(0)}, 
+                      W3:{v:Array(24).fill(0), r:Array(24).fill(0), t:Array(24).fill(0)} };
+    }
+
+    let heatData = {}; 
+    for(let d=0; d<=6; d++) { heatData[d] = { v:Array(24).fill(0), r:Array(24).fill(0), t:Array(24).fill(0) }; }
+
+    dadosFiltrados.forEach(r => {
+      let isHA = r.horario_atendimento === 'Dentro do horário Atendimento';
+      let conv = parseInt(r.qtd_conversas) || 0;
+      let isRet = r.retido === 'Sim' ? conv : 0;
+      
+      let dObj = new Date(r.conversation_start_date_br + "T00:00:00");
+      let diaS = dObj.getDay();
+      let h = parseInt(r.conversation_start_hora) || 0;
+
+      if(isHA) {
+        let targetW = r.conversation_start_week === semW0 ? 'W0' : 
+                      r.conversation_start_week === semW1 ? 'W1' : 
+                      r.conversation_start_week === semW2 ? 'W2' : 'W3';
+        gridData[diaS][targetW].v[h] += conv;
+        gridData[diaS][targetW].r[h] += isRet;
+        gridData[diaS][targetW].t[h] += conv; 
+      }
+
+      if(r.conversation_start_week === semW0 && isHA) {
+        heatData[diaS].v[h] += conv;
+        heatData[diaS].r[h] += isRet;
+        heatData[diaS].t[h] += conv;
+      }
+    });
+
+    renderGrid(gridData, maxDiaSemana, maxHora, isCurrentWeek); 
+    renderHeatmap(heatData);
+  }
+
+  window.opChartDataTables = {};
+
+  function abrirModalGrafico(diaIndex, titulo) {
+    document.getElementById('modal-grafico-titulo').innerText = titulo + (opMetricaChart === 'ret' ? " (% Retenção HA)" : " (Volume HA)");
+    document.getElementById('modal-grafico').style.display = 'flex';
+    
+    let dt = window.opChartDataTables[diaIndex];
+    if (!dt) return;
+
+    let opts = {
+      legend: 'none',
+      chartArea: {width: '90%', height: '80%', top: 20},
+      hAxis: {textStyle: {fontSize: 12, color: '#555'}, gridlines: {color: 'transparent'}},
+      vAxis: {
+         textStyle: {fontSize: 12, color: '#555'}, 
+         gridlines: {color: '#E5E5EA'},
+         minValue: 0,
+         maxValue: opMetricaChart === 'ret' ? 1 : null,
+         format: opMetricaChart === 'ret' ? '#%' : 'short'
+      },
+      series: {
+        0: { color: '#F26F21', lineWidth: 4 }, 
+        1: { color: '#1A365D', lineWidth: 2, pointSize: 6 }, 
+        2: { color: '#4A5568', lineWidth: 2, lineDashStyle: [8, 5] }, 
+        3: { color: '#CBD5E1', lineWidth: 2, lineDashStyle: [2, 2] } 
+      }
+    };
+    
+    let chart = new google.visualization.LineChart(document.getElementById('modal-grafico-body'));
+    chart.draw(dt, opts);
+  }
+
+  function fecharModalGrafico() { document.getElementById('modal-grafico').style.display = 'none'; }
+
+  function abrirModalHeatmap() {
+    document.getElementById('modal-heatmap-titulo').innerText = 'MATRIZ DE SATURAÇÃO (W0) - ' + (opMetricaHeatmap === 'ret' ? '% RETENÇÃO HA' : 'VOLUME HA');
+    document.getElementById('modal-heatmap-body').innerHTML = document.getElementById('heatmap-tabela').innerHTML;
+    document.getElementById('modal-heatmap').style.display = 'flex';
+  }
+
+  function fecharModalHeatmap() { document.getElementById('modal-heatmap').style.display = 'none'; }
+
+  function renderGrid(gd, maxDia, maxHora, isCurrentWeek) {
+    if(!google.visualization) return;
+    let container = document.getElementById('container-mini-charts');
+    container.innerHTML = '';
+    
+    const diasNomes = ['DOMINGO', 'SEGUNDA-FEIRA', 'TERÇA-FEIRA', 'QUARTA-FEIRA', 'QUINTA-FEIRA', 'SEXTA-FEIRA', 'SÁBADO', 'CONSOLIDADO SEMANAL'];
+    const ordemSemana = [1, 2, 3, 4, 5, 6, 0, 7];
+
+    ordemSemana.forEach(d => {
+      let dt = new google.visualization.DataTable();
+      dt.addColumn('string', 'Hora');
+      dt.addColumn('number', 'W0');
+      dt.addColumn('number', 'W-1');
+      dt.addColumn('number', 'W-2');
+      dt.addColumn('number', 'W-3');
+
+      for(let h=7; h<=21; h++) {
+        let v0 = null, v1 = null, v2 = null, v3 = null;
+
+        if (d === 7) {
+          let t0=0, r0=0, t1=0, r1=0, t2=0, r2=0, t3=0, r3=0;
+          let isFutureConsolidado = true; 
+
+          for(let dia=0; dia<=6; dia++) {
+            t0 += gd[dia].W0.t[h]; r0 += gd[dia].W0.r[h];
+            t1 += gd[dia].W1.t[h]; r1 += gd[dia].W1.r[h];
+            t2 += gd[dia].W2.t[h]; r2 += gd[dia].W2.r[h];
+            t3 += gd[dia].W3.t[h]; r3 += gd[dia].W3.r[h];
+
+            let dAdjus = dia === 0 ? 7 : dia;
+            let mAdjus = maxDia === 0 ? 7 : maxDia;
+            if (!(dAdjus > mAdjus || (dAdjus === mAdjus && h > maxHora))) {
+              isFutureConsolidado = false; 
+            }
+          }
+          v0 = t0 > 0 ? (opMetricaChart === 'ret' ? r0/t0 : t0) : null;
+          v1 = t1 > 0 ? (opMetricaChart === 'ret' ? r1/t1 : t1) : null;
+          v2 = t2 > 0 ? (opMetricaChart === 'ret' ? r2/t2 : t2) : null;
+          v3 = t3 > 0 ? (opMetricaChart === 'ret' ? r3/t3 : t3) : null;
+
+          if(isCurrentWeek && isFutureConsolidado) v0 = null;
+        } else {
+          v0 = gd[d].W0.t[h] > 0 ? (opMetricaChart === 'ret' ? gd[d].W0.r[h]/gd[d].W0.t[h] : gd[d].W0.v[h]) : null;
+          v1 = gd[d].W1.t[h] > 0 ? (opMetricaChart === 'ret' ? gd[d].W1.r[h]/gd[d].W1.t[h] : gd[d].W1.v[h]) : null;
+          v2 = gd[d].W2.t[h] > 0 ? (opMetricaChart === 'ret' ? gd[d].W2.r[h]/gd[d].W2.t[h] : gd[d].W2.v[h]) : null;
+          v3 = gd[d].W3.t[h] > 0 ? (opMetricaChart === 'ret' ? gd[d].W3.r[h]/gd[d].W3.t[h] : gd[d].W3.v[h]) : null;
+
+          let isFuture = false;
+          let dAdjus = d === 0 ? 7 : d; 
+          let mAdjus = maxDia === 0 ? 7 : maxDia;
+          if (dAdjus > mAdjus) isFuture = true;
+          else if (dAdjus === mAdjus && h > maxHora) isFuture = true;
+          
+          if(isCurrentWeek && isFuture) v0 = null;
+        }
+
+        dt.addRow([h.toString()+'h', v0, v1, v2, v3]);
+      }
+
+      window.opChartDataTables[d] = dt;
+
+      let divWrapper = document.createElement('div');
+      divWrapper.className = 'mini-chart-card';
+      let colorTitle = d === 7 ? 'color: var(--or); font-size: 13px;' : '';
+      
+      divWrapper.innerHTML = `
+        <i class="bi bi-zoom-in zoom-icon" onclick="abrirModalGrafico(${d}, '${diasNomes[d]}')" title="Expandir Gráfico"></i>
+        <div class="mini-chart-title" style="${colorTitle}">${diasNomes[d]}</div>
+        <div class="mini-chart-body" id="op-chart-${d}"></div>
+      `;
+      container.appendChild(divWrapper);
+
+      let opts = {
+        legend: 'none',
+        chartArea: {width: '85%', height: '75%', top: 15},
+        hAxis: {textStyle: {fontSize: 9, color: '#999'}, gridlines: {color: 'transparent'}},
+        vAxis: {
+           textStyle: {fontSize: 9, color: '#999'}, 
+           gridlines: {color: '#F5F5F7'},
+           minValue: 0,
+           maxValue: opMetricaChart === 'ret' ? 1 : null,
+           format: opMetricaChart === 'ret' ? '#%' : 'short'
+        },
+        series: {
+          0: { color: '#F26F21', lineWidth: 3.5 }, 
+          1: { color: '#1A365D', lineWidth: 1.5, pointSize: 4 }, 
+          2: { color: '#4A5568', lineWidth: 1.5, lineDashStyle: [6, 4] }, 
+          3: { color: '#CBD5E1', lineWidth: 1.5, lineDashStyle: [2, 2] } 
+        }
+      };
+      
+      let chart = new google.visualization.LineChart(document.getElementById(`op-chart-${d}`));
+      chart.draw(dt, opts);
+    });
+  }
+
+  function renderHeatmap(hd) {
+    document.getElementById('lbl-heatmap-metric').innerText = opMetricaHeatmap === 'ret' ? '% Retenção HA' : 'Volume HA';
+
+    let sumVol = 0, countVol = 0, maxVol = 1;
+    let sumRetNum = 0, sumRetDen = 0, maxRet = 0, minRet = 1;
+
+    for(let d=0; d<=6; d++){ 
+      for(let h=7; h<=21; h++){ 
+        let v = hd[d].v[h];
+        let t = hd[d].t[h];
+        let r = hd[d].r[h];
+
+        if(v > 0) {
+          sumVol += v;
+          countVol++;
+          maxVol = Math.max(maxVol, v);
+        }
+        if(t > 0) {
+          let ret = r / t;
+          sumRetNum += r;
+          sumRetDen += t;
+          maxRet = Math.max(maxRet, ret);
+          minRet = Math.min(minRet, ret);
+        }
+      } 
+    }
+    
+    let avgVol = countVol > 0 ? sumVol / countVol : 1;
+    let avgRet = sumRetDen > 0 ? sumRetNum / sumRetDen : 0;
+
+    if (maxRet === avgRet) maxRet = avgRet + 0.01;
+    if (minRet === avgRet) minRet = avgRet - 0.01;
+
+    const ordemSemana = [1, 2, 3, 4, 5, 6, 0];
+    const diasNomes = ['SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SAB', 'DOM'];
+    
+    let html = '<thead><tr><th class="row-header">HORA</th>';
+    diasNomes.forEach(dn => html += `<th>${dn}</th>`);
+    html += '</tr></thead><tbody>';
+
+    for(let h=7; h<=21; h++) {
+      html += `<tr><td class="row-header">${h.toString().padStart(2,'0')}:00</td>`;
+      ordemSemana.forEach(d => {
+        let val = 0; let txt = '-'; let bg = 'transparent';
+        
+        if(opMetricaHeatmap === 'ret') {
+          if(hd[d].t[h] > 0) {
+            val = hd[d].r[h]/hd[d].t[h];
+            txt = `<div>${(val*100).toFixed(0)}%</div><div class="heatmap-vol-sub">(${hd[d].t[h]})</div>`;
+            
+            if (val <= 0.40) {
+              bg = `rgba(153, 27, 27, 0.85)`; 
+            } else if (val >= avgRet) {
+              let ratio = (val - avgRet) / (maxRet - avgRet);
+              if (ratio > 1) ratio = 1;
+              let alpha = 0.2 + (ratio * 0.65);
+              bg = `rgba(21, 128, 61, ${alpha})`;
+            } else {
+              let ratio = (avgRet - val) / (avgRet - minRet);
+              if (ratio > 1) ratio = 1;
+              let alpha = 0.2 + (ratio * 0.55);
+              bg = `rgba(220, 38, 38, ${alpha})`;
+            }
+          }
+        } else {
+           val = hd[d].v[h];
+           if(val > 0) {
+             txt = val;
+             if (val > avgVol) {
+               let ratio = maxVol > avgVol ? (val - avgVol) / (maxVol - avgVol) : 1;
+               let alpha = 0.2 + (ratio * 0.7); 
+               bg = `rgba(220, 38, 38, ${alpha})`;
+             } else {
+               let ratio = (avgVol - val) / avgVol;
+               let alpha = 0.2 + (ratio * 0.6);
+               bg = `rgba(34, 197, 94, ${alpha})`;
+             }
+           }
+        }
+        html += `<td style="background-color: ${bg};">${txt}</td>`;
+      });
+      html += '</tr>';
+    }
+    html += '</tbody>';
+    document.getElementById('heatmap-tabela').innerHTML = html;
+
+    let modalHeatmapBody = document.getElementById('modal-heatmap-body');
+    if (modalHeatmapBody) modalHeatmapBody.innerHTML = html;
+  }
+</script>
