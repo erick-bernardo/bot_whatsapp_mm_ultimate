@@ -1,9 +1,7 @@
 <script>
-  // Memória local isolada para armazenar a string do CSV gerada no servidor
   let csvCache = "";
   let isAbaDadosInicializada = false;
 
-  // Função auxiliar para converter datas de forma segura sem problemas de fuso horário
   function formatarDataISO(dateObj) {
     let m = '' + (dateObj.getMonth() + 1);
     let d = '' + dateObj.getDate();
@@ -13,25 +11,19 @@
     return [y, m, d].join('-');
   }
 
-  // Acionado via Lazy Loading pelo script_global.html
   function inicializarAbaDados() {
     if(isAbaDadosInicializada) return;
 
     let hoje = new Date();
-    let diaSemana = hoje.getDay() || 7; // Ajuste para considerar 1 = Segunda, 7 = Domingo
-    
+    let diaSemana = hoje.getDay() || 7; 
     let dtIni = new Date(hoje);
-    // Subtrai os dias para chegar na segunda-feira da semana atual e subtrai mais 7 para iniciar na segunda da W-1
     dtIni.setDate(hoje.getDate() - diaSemana + 1 - 7);
-    
-    let dtFim = new Date(hoje); // dtFim será hoje (W0)
+    let dtFim = new Date(hoje); 
 
     document.getElementById('dd-inicio').value = formatarDataISO(dtIni);
     document.getElementById('dd-fim').value = formatarDataISO(dtFim);
 
-    // Dispara a consulta para popular a tela e o Cache
     consultarBaseDetalhada();
-    
     isAbaDadosInicializada = true;
   }
 
@@ -49,7 +41,6 @@
     const diffTime = Math.abs(d2 - d1);
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-    // TRAVA DE SEGURANÇA (MÁX 31 DIAS)
     if (diffDays > 31) {
       alert("O período selecionado excede 31 dias.\nPara não travar o seu painel e o servidor, exporte fatias menores de até 1 mês por vez.");
       return;
@@ -59,11 +50,9 @@
       return;
     }
 
-    // Aciona os Loaders
     document.getElementById('dados-view').style.display = 'none';
     document.getElementById('loader-dados').style.display = 'flex';
 
-    // Chama o servidor para bater no BigQuery com a versão de Alta Performance
     google.script.run
       .withSuccessHandler(renderizarTabelaDados)
       .withFailureHandler(function(err){
@@ -77,40 +66,64 @@
     document.getElementById('dados-view').style.display = 'block';
 
     if(!response || response.total === 0) {
-      document.getElementById('tbody-dados').innerHTML = '<tr><td colspan="9" class="text-center py-5 text-muted">Nenhum dado encontrado para o período selecionado.</td></tr>';
+      document.getElementById('tbody-dados').innerHTML = '<tr><td colspan="26" class="text-center py-5 text-muted">Nenhum dado encontrado para o período selecionado.</td></tr>';
       document.getElementById('lbl-total-linhas').innerText = '(0 linhas)';
       csvCache = "";
       return;
     }
 
-    // Salva a string crua do CSV gerada pelo Backend na memória do navegador
     csvCache = response.csvContent;
     document.getElementById('lbl-total-linhas').innerText = `(${response.total.toLocaleString('pt-BR')} linhas prontas para exportação)`;
 
     let html = '';
     
-    // A renderização utiliza o array de pré-visualização que o servidor mandou (máx 500 linhas)
     for(let i = 0; i < response.preview.length; i++) {
       let r = response.preview[i];
-      let tVendaTxt = r.tipo_venda === 'null' || !r.tipo_venda ? '-' : r.tipo_venda;
-      let gVendaTxt = r.grupo_venda === 'null' || !r.grupo_venda ? '-' : r.grupo_venda;
-      let bsatTxt = r.bsat_score === 'null' || !r.bsat_score ? '-' : r.bsat_score;
       
+      // Tratamento de valores vazios/nulos visuais
+      let r_id_pedido_pai = r.id_pedido_pai || '-';
+      let r_id_pedido_filho = r.id_pedido_filho || '-';
+      let r_tipo_venda = r.tipo_venda === 'null' || !r.tipo_venda ? '-' : r.tipo_venda;
+      let r_grupo_venda = r.grupo_venda === 'null' || !r.grupo_venda ? '-' : r.grupo_venda;
+      let r_bsatscore = r.bsatscore === 'null' || !r.bsatscore ? '-' : r.bsatscore;
+      let r_confidence = r.confidence_score === 'null' || !r.confidence_score ? '-' : r.confidence_score;
+      let r_recontato = r.recontato === 'null' || !r.recontato ? '-' : r.recontato;
+      
+      // O Hyperlink da conversa formatado
+      let htmlLink = r.link_conversa ? `<a href="${r.link_conversa}" target="_blank" class="text-primary text-decoration-none fw-bold"><i class="bi bi-box-arrow-up-right"></i> Abrir</a>` : '-';
+
       html += `<tr>
-        <td class="ps-2 fw-bold text-dark text-start">${r.conversation_id}</td>
-        <td class="text-start">${r.conversation_start_time_br}</td>
-        <td class="text-center text-primary">${r.id_pedido_filho}</td>
+        <td class="ps-2 text-nowrap text-start">${r.conversation_start_time_br}</td>
+        <td class="text-start fw-bold">${r.conversation_id}</td>
         <td class="text-center">${r.retido}</td>
-        <td class="text-start text-capitalize">${r.use_case}</td>
+        <td class="text-center">${r_id_pedido_pai}</td>
+        <td class="text-center">${r_id_pedido_filho}</td>
+        <td class="text-center">${r_tipo_venda}</td>
+        <td class="text-center">${r_grupo_venda}</td>
+        <td class="text-center">${htmlLink}</td>
+        <td class="text-start text-capitalize">${r.data_use_case}</td>
+        <td class="text-center fw-bold">${r_bsatscore}</td>
+        <td class="text-start">${r.horario_atendimento}</td>
+        <td class="text-nowrap">${r.conversation_end_date_br}</td>
+        <td class="text-center">${r.channel}</td>
+        <td class="text-center">${r.conversation_status}</td>
+        <td class="text-start">${r.last_resolution}</td>
         <td class="text-center">${r.is_llm_conversation}</td>
-        <td class="text-center fw-bold">${bsatTxt}</td>
-        <td class="text-center">${tVendaTxt}</td>
-        <td class="text-center">${gVendaTxt}</td>
+        <td class="text-center">${r.bot_messages_count}</td>
+        <td class="text-center">${r.visitor_messages_count}</td>
+        <td class="text-center">${r.not_understood_messages_count}</td>
+        <td class="text-center">${r_confidence}</td>
+        <td class="text-start">${r.platform_conversation_id}</td>
+        <td class="text-nowrap">${r.conversation_start_date_br}</td>
+        <td class="text-center">${r.conversation_start_week}</td>
+        <td class="text-center">${r.conversation_start_month}</td>
+        <td class="text-center">${r.conversation_start_hora}</td>
+        <td class="text-center">${r_recontato}</td>
       </tr>`;
     }
     
     if(response.total > response.preview.length) {
-      html += `<tr><td colspan="9" class="text-center py-3 text-muted fw-bold" style="background: var(--bg);">Tabela de pré-visualização limitada a ${response.preview.length} linhas. Clique em "Baixar CSV" para extrair todas as ${response.total.toLocaleString('pt-BR')} interações.</td></tr>`;
+      html += `<tr><td colspan="26" class="text-center py-3 text-muted fw-bold" style="background: var(--bg);">Tabela de pré-visualização limitada a ${response.preview.length} linhas. Clique em "Baixar CSV" para extrair todas as ${response.total.toLocaleString('pt-BR')} interações.</td></tr>`;
     }
 
     document.getElementById('tbody-dados').innerHTML = html;
@@ -124,10 +137,8 @@
 
     let fileName = `Base_Detalhada_UltimateBot_${document.getElementById('dd-inicio').value}_ate_${document.getElementById('dd-fim').value}.csv`;
     
-    // Converte a string pré-processada pelo backend em um arquivo físico na memória local do navegador
-    let blob = new Blob(["\uFEFF" + csvCache], { type: 'text/csv;charset=utf-8;' }); // \uFEFF Força o Excel a entender a acentuação
+    let blob = new Blob(["\uFEFF" + csvCache], { type: 'text/csv;charset=utf-8;' }); 
     
-    // Processo de ancoragem e clique dinâmico para forçar o download
     let link = document.createElement("a");
     if (link.download !== undefined) { 
         let url = URL.createObjectURL(blob);
@@ -137,9 +148,9 @@
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-        URL.revokeObjectURL(url); // Limpa a RAM após baixar
+        URL.revokeObjectURL(url); 
     } else {
-        alert("O seu navegador não suporta downloads dinâmicos. Habilite essa permissão.");
+        alert("O seu navegador bloqueou o download automático.");
     }
   }
 </script>

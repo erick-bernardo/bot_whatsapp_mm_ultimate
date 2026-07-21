@@ -12,7 +12,6 @@
     <i class="bi bi-search"></i> Buscar Dados (Máx 31 dias)
   </button>
   
-  <!-- Botão de exportação alinhado à direita -->
   <button class="btn btn-outline-secondary ms-auto" style="font-size: 13px; font-weight: 700; border-color: var(--bdr);" onclick="exportarCSV()">
     <i class="bi bi-filetype-csv" style="color: var(--gr);"></i> Baixar CSV
   </button>
@@ -30,24 +29,40 @@
       🗄️ Pré-visualização da Base Bruta <span id="lbl-total-linhas" style="color: var(--or); margin-left: 5px;">(0 linhas)</span>
     </div>
     
-    <!-- Tabela com altura máxima e rolagem (Scroll) -->
     <div class="table-responsive" style="max-height: 60vh; overflow-y: auto; padding: 0 18px 18px 18px;">
       <table class="table table-hover table-custom align-middle mb-0">
         <thead style="position: sticky; top: 0; background: var(--wh); z-index: 2;">
           <tr>
-            <th class="ps-2 text-start">ID Conversa</th>
-            <th class="text-start">Data/Hora (BR)</th>
-            <th class="text-center">ID Pedido</th>
-            <th class="text-center">Retido (Bot Handled)</th>
-            <th class="text-start">Use Case</th>
-            <th class="text-center">LLM / GenAI</th>
-            <th class="text-center">BSAT Score</th>
+            <th class="ps-2 text-start">Data/Hora Início (BR)</th>
+            <th class="text-start">ID Conversa</th>
+            <th class="text-center">Retido</th>
+            <th class="text-center">ID Pedido Pai</th>
+            <th class="text-center">ID Pedido Filho</th>
             <th class="text-center">Tipo Venda</th>
             <th class="text-center">Grupo Venda</th>
+            <th class="text-center">Link Conversa</th>
+            <th class="text-start">Use Case</th>
+            <th class="text-center">BSAT Score</th>
+            <th class="text-start">Horário Atendimento</th>
+            <th class="text-start">Data Fim (BR)</th>
+            <th class="text-center">Canal</th>
+            <th class="text-center">Status</th>
+            <th class="text-start">Última Resolução</th>
+            <th class="text-center">LLM / GenAI</th>
+            <th class="text-center">Qtd Msg Bot</th>
+            <th class="text-center">Qtd Msg Vis.</th>
+            <th class="text-center">Msg Não Entendida</th>
+            <th class="text-center">Confidence Score</th>
+            <th class="text-start">Platform ID</th>
+            <th class="text-start">Data Início (BR)</th>
+            <th class="text-center">Semana</th>
+            <th class="text-center">Mês</th>
+            <th class="text-center">Hora</th>
+            <th class="text-center">Recontato</th>
           </tr>
         </thead>
         <tbody id="tbody-dados">
-          <tr><td colspan="9" class="text-center py-5 text-muted">Selecione o período e clique em "Buscar Dados" para carregar a tabela.</td></tr>
+          <tr><td colspan="26" class="text-center py-5 text-muted">Selecione o período e clique em "Buscar Dados" para carregar a tabela.</td></tr>
         </tbody>
       </table>
     </div>

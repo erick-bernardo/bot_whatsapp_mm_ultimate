@@ -419,96 +419,282 @@ function extraiBaseOperacional() {
 }
 
 // ==============================================================================
-// FUNÇÃO 3: EXTRAÇÃO SOB DEMANDA (BASE DETALHADA PARA CSV)
+// FUNÇÃO 3: EXTRAÇÃO DE ALTA PERFORMANCE (CSV CRIADO DIRETO NO BACK-END)
 // ==============================================================================
-function extraiBaseDetalhada(dataInicio, dataFim) {
+function extraiBaseDetalhadaAltaPerformance(dataInicio, dataFim) {
   const projectId = 'cust-exp-dp-curated-prd-52f1'; 
   
   if (!dataInicio || !dataFim) {
     throw new Error("Datas de início e fim são obrigatórias.");
   }
 
+  Logger.log("Iniciando extração detalhada de alta performance no BigQuery...");
+
   const sqlQueryDetalhada = `
     WITH base_antiga AS (
-      SELECT 
+      SELECT DISTINCT
+        CAST(ult.bot_id AS STRING) AS bot_id,
+        CAST(ult.bot_name AS STRING) AS bot_name,
         CAST(ult.conversation_id AS STRING) AS conversation_id,
-        FORMAT_DATETIME('%Y-%m-%d %H:%M:%S', DATETIME(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo")) AS conversation_start_time_br,
-        REGEXP_REPLACE(CAST(ult.children_id AS STRING), r'[\\.,].*', '') AS id_pedido_filho,
+        CONCAT('https://dashboard.us.ultimate.ai/bot/', ult.bot_id, '/conversations/', ult.conversation_id) AS link_conversa,
+        CAST(ult.platform_conversation_id AS STRING) AS platform_conversation_id,
+        SAFE_CAST(ult.conversation_start_time AS TIMESTAMP) AS conversation_start_time,
+        CAST(FORMAT_DATE('%Y-%m-%d', DATE(CAST(ult.conversation_start_time AS TIMESTAMP))) AS STRING) as conversation_start_date,
+        DATETIME(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo") AS conversation_start_time_br,
+        CAST(FORMAT_DATE('%Y-%m-%d', DATE(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo")) AS STRING) as conversation_start_date_br,
+        CAST(EXTRACT(ISOWEEK FROM DATETIME(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo")) AS INT64) AS conversation_start_week,
+        CAST(EXTRACT(MONTH FROM DATETIME(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo")) AS INT64) AS conversation_start_month,
+        CAST(EXTRACT(HOUR FROM DATETIME(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo")) AS INT64) AS conversation_start_hora,
+        CAST(( CASE
+          WHEN (
+            (
+              EXTRACT(DAYOFWEEK FROM DATETIME(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo")) BETWEEN 2 AND 7
+              AND EXTRACT(HOUR FROM DATETIME(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo")) BETWEEN 8 AND 19
+            )
+            OR (
+              EXTRACT(DAYOFWEEK FROM DATETIME(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo")) = 1
+              AND EXTRACT(HOUR FROM DATETIME(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo")) BETWEEN 9 AND 14
+            )
+          )
+          THEN 'Dentro do horário Atendimento'
+          ELSE 'Fora do horário Atendimento'
+        END ) AS STRING) AS horario_atendimento,  
+        SAFE_CAST(ult.conversation_end_time AS TIMESTAMP) AS conversation_end_time,
+        CAST(FORMAT_DATE('%Y-%m-%d', DATE(CAST(ult.conversation_end_time AS TIMESTAMP), "America/Sao_Paulo")) AS STRING) as conversation_end_date_br, 
+        
+        CAST(REGEXP_REPLACE(CAST(ult.order_id AS STRING), r'[\\.,].*', '') AS STRING) AS id_pedido_pai,
+        CAST(REGEXP_REPLACE(CAST(ult.children_id AS STRING), r'[\\.,].*', '') AS STRING) AS id_pedido_filho,
+        
+        CAST(ult.tma AS STRING) AS tma,
+        CAST(ult.channel AS STRING) AS channel,
+        CAST(ult.conversation_status AS STRING) AS conversation_status,
         CAST(CASE WHEN ult.conversation_status = 'botHandled' THEN 'Sim' ELSE 'Não' END AS STRING) AS retido,
-        CAST(ult.use_case AS STRING) AS use_case,
+        CAST(ult.last_resolution AS STRING) AS last_resolution,
         CAST(ult.is_llm_conversation AS STRING) AS is_llm_conversation,
-        CAST(ult.bsat_score AS STRING) AS bsat_score
+        SAFE_CAST(ult.bot_messages_count AS INT64) AS bot_messages_count,
+        SAFE_CAST(ult.visitor_messages_count AS INT64) AS visitor_messages_count,
+        SAFE_CAST(ult.not_understood_messages_count AS INT64) AS not_understood_messages_count,
+        SAFE_CAST(ult.bsat_score AS FLOAT64) AS data_bsatscore,
+        SAFE_CAST(ult.confidence_score AS FLOAT64) AS confidence_score,
+        CAST(ult.use_case AS STRING) AS data_use_case,
+        CAST(ult.wpp_number AS STRING) AS wpp_number,
+        CAST(ult.document AS STRING) AS document,
+        CAST(ult.recontato AS STRING) AS recontato
+
       FROM \`cust-exp-dp-curated-prd-52f1.gold.zendesk_ultimate\` AS ult
-      WHERE DATE(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo") BETWEEN '${dataInicio}' AND '${dataFim}'
-        AND DATE(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo") < '2026-07-01'
-        AND LOWER(ult.bot_name) = 'madeiramadeira produção - chat'
-        AND (CAST(ult.test_mode AS STRING) = 'false' OR ult.test_mode IS FALSE OR ult.test_mode IS NULL)
-    ),
-    base_nova AS (
-      SELECT 
-        CAST(ult.conversation_id AS STRING) AS conversation_id,
-        FORMAT_DATETIME('%Y-%m-%d %H:%M:%S', DATETIME(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo")) AS conversation_start_time_br,
-        REGEXP_REPLACE(CAST(ult.children_id AS STRING), r'[\\.,].*', '') AS id_pedido_filho,
-        CAST(CASE WHEN ult.conversation_status = 'botHandled' THEN 'Sim' ELSE 'Não' END AS STRING) AS retido,
-        CAST(ult.use_case AS STRING) AS use_case,
-        CAST(ult.has_knowledge_response_attempt AS STRING) AS is_llm_conversation,
-        CAST(ult.bsat_score AS STRING) AS bsat_score
-      FROM \`cust-exp-dp-curated-prd-52f1.gold.ultimate\` AS ult
-      WHERE ult.partition_date IS NOT NULL
+      WHERE 
+        DATE(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo") < '2026-07-01'
         AND DATE(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo") BETWEEN '${dataInicio}' AND '${dataFim}'
-        AND DATE(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo") >= '2026-07-01'
         AND LOWER(ult.bot_name) = 'madeiramadeira produção - chat'
+        AND (
+             LOWER(ult.use_case) NOT IN ('i want to buy', 'store address')
+             OR ult.use_case IS NULL
+            )
+    ),
+
+    base_nova AS (
+      SELECT DISTINCT
+        CAST(ult.bot_id AS STRING) AS bot_id,
+        CAST(ult.bot_name AS STRING) AS bot_name,
+        CAST(ult.conversation_id AS STRING) AS conversation_id,
+        CONCAT('https://dashboard.us.ultimate.ai/bot/', ult.bot_id, '/conversations/', ult.conversation_id) AS link_conversa,
+        CAST(ult.platform_conversation_id AS STRING) AS platform_conversation_id,
+        SAFE_CAST(ult.conversation_start_time AS TIMESTAMP) AS conversation_start_time,
+        CAST(FORMAT_DATE('%Y-%m-%d', DATE(CAST(ult.conversation_start_time AS TIMESTAMP))) AS STRING) as conversation_start_date,
+        DATETIME(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo") AS conversation_start_time_br,
+        CAST(FORMAT_DATE('%Y-%m-%d', DATE(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo")) AS STRING) as conversation_start_date_br,
+        CAST(EXTRACT(ISOWEEK FROM DATETIME(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo")) AS INT64) AS conversation_start_week,
+        CAST(EXTRACT(MONTH FROM DATETIME(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo")) AS INT64) AS conversation_start_month,
+        CAST(EXTRACT(HOUR FROM DATETIME(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo")) AS INT64) AS conversation_start_hora,
+        CAST(( CASE
+          WHEN (
+            (
+              EXTRACT(DAYOFWEEK FROM DATETIME(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo")) BETWEEN 2 AND 7
+              AND EXTRACT(HOUR FROM DATETIME(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo")) BETWEEN 8 AND 19
+            )
+            OR (
+              EXTRACT(DAYOFWEEK FROM DATETIME(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo")) = 1
+              AND EXTRACT(HOUR FROM DATETIME(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo")) BETWEEN 9 AND 14
+            )
+          )
+          THEN 'Dentro do horário Atendimento'
+          ELSE 'Fora do horário Atendimento'
+        END ) AS STRING) AS horario_atendimento,  
+        SAFE_CAST(ult.conversation_end_time AS TIMESTAMP) AS conversation_end_time,
+        CAST(FORMAT_DATE('%Y-%m-%d', DATE(CAST(ult.conversation_end_time AS TIMESTAMP), "America/Sao_Paulo")) AS STRING) as conversation_end_date_br, 
+        
+        CAST(REGEXP_REPLACE(CAST(ult.order_id AS STRING), r'[\\.,].*', '') AS STRING) AS id_pedido_pai,
+        CAST(REGEXP_REPLACE(CAST(ult.children_id AS STRING), r'[\\.,].*', '') AS STRING) AS id_pedido_filho, 
+        
+        CAST(ult.tma_minutes AS STRING) AS tma, 
+        CAST(ult.channel AS STRING) AS channel,
+        CAST(ult.conversation_status AS STRING) AS conversation_status,
+        CAST(CASE WHEN ult.conversation_status = 'botHandled' THEN 'Sim' ELSE 'Não' END AS STRING) AS retido,
+        CAST(ult.last_resolution AS STRING) AS last_resolution,
+        CAST(ult.has_knowledge_response_attempt AS STRING) AS is_llm_conversation, 
+        SAFE_CAST(ult.bot_messages_count AS INT64) AS bot_messages_count,
+        SAFE_CAST(ult.visitor_messages_count AS INT64) AS visitor_messages_count,
+        SAFE_CAST(ult.not_understood_messages_count AS INT64) AS not_understood_messages_count,
+        SAFE_CAST(ult.bsat_score AS FLOAT64) AS data_bsatscore, 
+        SAFE_CAST(ult.confidence_score AS FLOAT64) AS confidence_score,
+        CAST(ult.use_case AS STRING) AS data_use_case,    
+        CAST(ult.wpp_number AS STRING) AS wpp_number,
+        CAST(ult.document AS STRING) AS document,
+        CAST(ult.recontato AS STRING) AS recontato
+
+      FROM \`cust-exp-dp-curated-prd-52f1.gold.ultimate\` AS ult 
+      WHERE 
+        ult.partition_date IS NOT NULL
+        AND DATE(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo") >= '2026-07-01'
+        AND DATE(CAST(ult.conversation_start_time AS TIMESTAMP), "America/Sao_Paulo") BETWEEN '${dataInicio}' AND '${dataFim}'
+        AND LOWER(ult.bot_name) = 'madeiramadeira produção - chat'
+        AND (
+             LOWER(ult.use_case) NOT IN ('i want to buy', 'store address')
+             OR ult.use_case IS NULL
+            )
         AND (CAST(ult.test_mode AS STRING) = 'false' OR ult.test_mode IS FALSE OR ult.test_mode IS NULL)
     ),
+
     base_unificada AS (
-      SELECT * FROM base_antiga UNION ALL SELECT * FROM base_nova
+      SELECT * FROM base_antiga
+      UNION ALL
+      SELECT * FROM base_nova
     ),
+
     dados_logistica AS (
       SELECT 
         id_pedido,
         CAST(MAX(tipo_venda) AS STRING) AS tipo_venda,
         CAST(MAX(CASE WHEN empresa_venda IN ('MM','MM_App','Guide Shop','CasaTema') THEN 'MadeiraMadeira' ELSE 'Marketplace' END) AS STRING) AS grupo_venda
       FROM \`logistics-dp-curated-prd-d443.silver_facade.looker_plan_looker_sales\`
-      WHERE data_compra_date >= DATE_SUB(CURRENT_DATE("America/Sao_Paulo"), INTERVAL 360 DAY)
+      WHERE data_compra_date >= DATE_SUB(CURRENT_DATE("America/Sao_Paulo"), INTERVAL 720 DAY)
       GROUP BY id_pedido
     )
+
     SELECT 
-      u.*,
-      v.tipo_venda,
-      v.grupo_venda
+      FORMAT_DATETIME('%Y-%m-%d %H:%M:%S', u.conversation_start_time_br) AS conversation_start_time_br,
+      u.conversation_id,
+      u.retido,
+      u.id_pedido_pai,
+      u.id_pedido_filho,
+      l.tipo_venda,
+      l.grupo_venda,
+      u.link_conversa,
+      u.data_use_case,
+      u.data_bsatscore as bsatscore,
+      u.horario_atendimento,
+      u.conversation_end_date_br,
+      u.channel,
+      u.conversation_status,
+      u.last_resolution,
+      u.is_llm_conversation,
+      u.bot_messages_count,
+      u.visitor_messages_count,
+      u.not_understood_messages_count,
+      u.confidence_score,
+      u.platform_conversation_id,
+      u.conversation_start_date_br,
+      u.conversation_start_week,
+      u.conversation_start_month,
+      u.conversation_start_hora,
+      u.recontato
     FROM base_unificada u
-    LEFT JOIN dados_logistica v ON SAFE_CAST(u.id_pedido_filho AS INT64) = v.id_pedido
-    ORDER BY conversation_start_time_br DESC
-    LIMIT 50000;
+    LEFT JOIN dados_logistica l ON SAFE_CAST(u.id_pedido_filho AS INT64) = l.id_pedido
+    ORDER BY 
+      u.conversation_start_time_br DESC
+    LIMIT 60000;
   `;
 
   const request = { query: sqlQueryDetalhada, useLegacySql: false };
 
   try {
-    const queryResults = BigQuery.Jobs.query(request, projectId);
+    let queryResults = BigQuery.Jobs.query(request, projectId);
+    let jobId = queryResults.jobReference.jobId;
     let sleepTimeMs = 500;
+    
     while (!queryResults.jobComplete) {
       Utilities.sleep(sleepTimeMs);
       sleepTimeMs *= 2;
+      queryResults = BigQuery.Jobs.getQueryResults(projectId, jobId);
     }
 
-    const rows = queryResults.rows;
-    const fields = queryResults.schema.fields;
-    const dataOutput = [];
+    let previewData = [];
+    
+    // Cabeçalho atualizado com a ordem exata das 26 colunas solicitadas
+    let csvRows = ["conversation_start_time_br,conversation_id,retido,id_pedido_pai,id_pedido_filho,tipo_venda,grupo_venda,link_conversa,data_use_case,bsatscore,horario_atendimento,conversation_end_date_br,channel,conversation_status,last_resolution,is_llm_conversation,bot_messages_count,visitor_messages_count,not_understood_messages_count,confidence_score,platform_conversation_id,conversation_start_date_br,conversation_start_week,conversation_start_month,conversation_start_hora,recontato"];
+    let totalLinhasProcessadas = 0;
 
-    if (rows) {
+    function escapeCSV(val) {
+      if (val === null || val === undefined) return '""';
+      let stringVal = String(val);
+      return '"' + stringVal.replace(/"/g, '""') + '"';
+    }
+
+    function processarPagina(rows, fields) {
+      if (!rows) return;
       for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        const record = {};
+        let record = {};
         for (let j = 0; j < fields.length; j++) {
-          record[fields[j].name] = row.f[j].v !== null ? row.f[j].v : '';
+          record[fields[j].name] = rows[i].f[j].v !== null ? rows[i].f[j].v : '';
         }
-        dataOutput.push(record);
+        
+        if (totalLinhasProcessadas < 500) {
+          previewData.push(record);
+        }
+        
+        // Empacota as 26 colunas geradas no Array
+        csvRows.push([
+          escapeCSV(record.conversation_start_time_br),
+          escapeCSV(record.conversation_id),
+          escapeCSV(record.retido),
+          escapeCSV(record.id_pedido_pai),
+          escapeCSV(record.id_pedido_filho),
+          escapeCSV(record.tipo_venda),
+          escapeCSV(record.grupo_venda),
+          escapeCSV(record.link_conversa),
+          escapeCSV(record.data_use_case),
+          escapeCSV(record.bsatscore),
+          escapeCSV(record.horario_atendimento),
+          escapeCSV(record.conversation_end_date_br),
+          escapeCSV(record.channel),
+          escapeCSV(record.conversation_status),
+          escapeCSV(record.last_resolution),
+          escapeCSV(record.is_llm_conversation),
+          escapeCSV(record.bot_messages_count),
+          escapeCSV(record.visitor_messages_count),
+          escapeCSV(record.not_understood_messages_count),
+          escapeCSV(record.confidence_score),
+          escapeCSV(record.platform_conversation_id),
+          escapeCSV(record.conversation_start_date_br),
+          escapeCSV(record.conversation_start_week),
+          escapeCSV(record.conversation_start_month),
+          escapeCSV(record.conversation_start_hora),
+          escapeCSV(record.recontato)
+        ].join(','));
+        
+        totalLinhasProcessadas++;
       }
     }
-    return dataOutput;
+
+    processarPagina(queryResults.rows, queryResults.schema.fields);
+
+    let pageToken = queryResults.pageToken;
+    while (pageToken) {
+      queryResults = BigQuery.Jobs.getQueryResults(projectId, jobId, { pageToken: pageToken });
+      pageToken = queryResults.pageToken;
+      processarPagina(queryResults.rows, queryResults.schema.fields);
+    }
+    
+    Logger.log("Total de linhas extraídas e convertidas: " + totalLinhasProcessadas);
+
+    return {
+      preview: previewData,
+      csvContent: csvRows.join('\n'),
+      total: totalLinhasProcessadas
+    };
+
   } catch (err) {
     Logger.log('Erro na extração detalhada: ' + err.toString());
-    throw new Error("Falha ao processar extração detalhada.");
+    throw new Error("Falha ao processar extração detalhada no BigQuery.");
   }
 }

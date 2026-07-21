@@ -12,14 +12,10 @@
   let dadosAtuais = [];
   let chartGranularity = 'week';
 
-  // Variáveis da Aba Operacional (Estados Independentes)
+  // Variáveis da Aba Operacional
   let opMetricaChart = 'ret'; 
   let opMetricaHeatmap = 'ret'; 
   
-  let opTableData = [];
-  let opSortCol = 'volHA';
-  let opSortAsc = false;
-
   window.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => {
       const splash = document.getElementById('splash-screen');
@@ -79,7 +75,6 @@
     document.querySelectorAll('.nav-item').forEach(e => e.classList.remove('active'));
     if(el) el.classList.add('active');
     
-    // Esconder sidebar no mobile após o clique
     if (window.innerWidth <= 992) {
       document.body.classList.remove('sidebar-open');
     }
@@ -117,6 +112,11 @@
     } 
     else if (aba === 'dados') {
       document.getElementById('conteudo-dados').style.display = 'block';
+      
+      // GATILHO QUE ESTAVA FALTANDO PARA A ABA DE DADOS FUNCIONAR
+      if (typeof inicializarAbaDados === 'function') {
+        inicializarAbaDados();
+      }
     }
   }
 
