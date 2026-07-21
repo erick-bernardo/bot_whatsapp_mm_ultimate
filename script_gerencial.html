@@ -72,47 +72,121 @@
       if (chartGranularity === 'week') chave = row.conversation_start_week;
       if (chartGranularity === 'month') chave = row.conversation_start_month;
 
-      if(!agrupamento[chave]) agrupamento[chave] = { volHA: 0, retHA: 0 };
+      if(!agrupamento[chave]) agrupamento[chave] = { volHA: 0, retHA: 0, prom: 0, resp: 0 };
       let conv = parseInt(row.qtd_conversas) || 0;
       agrupamento[chave].volHA += conv;
       if(row.retido === 'Sim') agrupamento[chave].retHA += conv;
+      
+      agrupamento[chave].prom += parseInt(row.sum_promotores_bsat) || 0;
+      agrupamento[chave].resp += parseInt(row.qtd_respostas_bsat) || 0;
     });
 
     let chavesOrdernadas = Object.keys(agrupamento).sort();
-    let chartData = [['Período', 'Volume HA', '% Retenção', { role: 'annotation' }]];
+    
+    // Tabela de Dados: Adicionamos a "Linha Invisível do Meio" para ancorar a anotação
+    let chartData = [[
+      'Período', 
+      'Volume HA',
+      'Volume Meio', { role: 'annotation' }, 
+      '% Retenção', { role: 'annotation' }, 
+      '% BSAT', { role: 'annotation' }
+    ]];
 
     chavesOrdernadas.forEach(c => {
-      let tx = agrupamento[c].volHA > 0 ? (agrupamento[c].retHA / agrupamento[c].volHA) : 0;
-      let annotation = (tx * 100).toFixed(1) + '%';
-      chartData.push([c, agrupamento[c].volHA, tx, annotation]);
+      let vol = agrupamento[c].volHA;
+      let volMeio = vol > 0 ? vol / 2 : null; // Ponto invisível perfeitamente no meio da barra
+      let annotationVol = vol > 0 ? vol.toLocaleString('pt-BR') : null;
+
+      let tx = vol > 0 ? (agrupamento[c].retHA / vol) : 0;
+      let annotationRet = (tx * 100).toFixed(1) + '%';
+      
+      let txBsat = agrupamento[c].resp > 0 ? (agrupamento[c].prom / agrupamento[c].resp) : null;
+      let annotationBsat = txBsat !== null ? (txBsat * 100).toFixed(1) + '%' : null;
+
+      // Inserindo os dados: O volume real gera a barra, o volumeMeio segura o rótulo
+      chartData.push([c, vol, volMeio, annotationVol, tx, annotationRet, txBsat, annotationBsat]);
     });
 
     if(chartData.length <= 1) { document.getElementById('chart_div').innerHTML = '<p class="text-center mt-5 text-muted">Sem dados HA no período para plotar gráfico.</p>'; return; }
 
     let dataTable = google.visualization.arrayToDataTable(chartData);
     let formatter = new google.visualization.NumberFormat({pattern: '#,##0.0%'});
-    formatter.format(dataTable, 2);
+    
+    // Formatação dos eixos de % que agora estão nos índices 4 e 6
+    formatter.format(dataTable, 4);
+    formatter.format(dataTable, 6);
 
     let options = {
       legend: { position: 'top', textStyle: {color: '#555566'} },
-      colors: ['#E5E5EA', '#FF6B00'],
+      // O 'transparent' na posição 1 faz a nossa linha do meio desaparecer
+      colors: ['#E5E5EA', 'transparent', '#FF6B00', '#9999AA'],
       seriesType: 'bars',
       series: { 
          0: { type: 'bars', targetAxisIndex: 0 },
-         1: { type: 'line', targetAxisIndex: 1, lineWidth: 3, pointSize: 5 } 
+         // Série Fantasma (Invisível, Inativa para o Mouse, Fora da Legenda, servindo só de Cabide para a Anotação)
+         1: { type: 'line', targetAxisIndex: 0, lineWidth: 0, pointSize: 0, visibleInLegend: false, enableInteractivity: false, annotations: { textStyle: { color: '#555566' } } },
+         2: { type: 'line', targetAxisIndex: 1, lineWidth: 3, pointSize: 5 },
+         3: { type: 'line', targetAxisIndex: 1, lineWidth: 2, pointSize: 4, lineDashStyle: [4, 4] } 
       },
       vAxes: {
         0: { title: 'Volume', textStyle: { color: '#9999AA' }, gridlines: {color: '#F5F5F7'}, viewWindow: { min: 0 } },
-        1: { title: '% Ret', format: '#%', textStyle: { color: '#FF6B00' }, gridlines: {color: 'transparent'}, viewWindow: { min: 0 } }
+        1: { title: '% Taxas', format: '#%', textStyle: { color: '#555566' }, gridlines: {color: 'transparent'}, viewWindow: { min: 0 } }
       },
       hAxis: { textStyle: { color: '#9999AA' } },
       chartArea: { width: '85%', height: '60%', top: 40 }, 
       backgroundColor: 'transparent',
-      annotations: { alwaysOutside: true, textStyle: { fontSize: 11, bold: true, color: '#FF6B00' }, stem: { color: 'transparent' } }
+      // alwaysOutside volta a ser true para que a retenção e o BSAT fiquem elegantes acima dos pontos, e o do Volume obedeça a linha invisível
+      annotations: { alwaysOutside: true, textStyle: { fontSize: 11, bold: true }, stem: { color: 'transparent' } }
     };
 
     let chart = new google.visualization.ComboChart(document.getElementById('chart_div'));
-    chart.draw(dataTable, options);
+    
+    let columns = [];
+    for (let i = 0; i < dataTable.getNumberOfColumns(); i++) {
+      columns.push(i);
+    }
+
+    google.visualization.events.addListener(chart, 'select', function () {
+      let sel = chart.getSelection();
+      
+      // Se clicou em um item de legenda
+      if (sel.length > 0 && sel[0].row === null) {
+        let col = sel[0].column;
+
+        if (columns[col] == col) {
+          // Oculta a linha principal clicada
+          columns[col] = {
+            label: dataTable.getColumnLabel(col),
+            type: dataTable.getColumnType(col),
+            calc: function () { return null; }
+          };
+          
+          // Se ocultou o Volume HA (coluna 1), oculta também a série fantasma (col 2) e o label fantasma (col 3)
+          if (col === 1) {
+             columns[2] = { label: dataTable.getColumnLabel(2), type: dataTable.getColumnType(2), calc: function () { return null; } };
+             columns[3] = { label: dataTable.getColumnLabel(3), type: dataTable.getColumnType(3), role: 'annotation', calc: function () { return null; } };
+          }
+          // Se ocultou a Retenção (col 4) oculta sua label (col 5)
+          if (col === 4) columns[5] = { label: dataTable.getColumnLabel(5), type: dataTable.getColumnType(5), role: 'annotation', calc: function () { return null; } };
+          // Se ocultou o BSAT (col 6) oculta sua label (col 7)
+          if (col === 6) columns[7] = { label: dataTable.getColumnLabel(7), type: dataTable.getColumnType(7), role: 'annotation', calc: function () { return null; } };
+        } else {
+          // Restaura todos ao natural se for ativado
+          columns[col] = col;
+          if (col === 1) { columns[2] = 2; columns[3] = 3; }
+          if (col === 4) columns[5] = 5;
+          if (col === 6) columns[7] = 7;
+        }
+
+        let view = new google.visualization.DataView(dataTable);
+        view.setColumns(columns);
+        chart.draw(view, options);
+      }
+    });
+
+    let view = new google.visualization.DataView(dataTable);
+    view.setColumns(columns);
+    chart.draw(view, options);
   }
 
   function getSemanaAnterior(semanaFormat) {
