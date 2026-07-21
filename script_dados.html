@@ -1,6 +1,6 @@
 <script>
-  // Memória local isolada para os dados da aba de exportação
-  let baseDetalhadaCache = [];
+  // Memória local isolada para armazenar a string do CSV gerada no servidor
+  let csvCache = "";
   let isAbaDadosInicializada = false;
 
   // Função auxiliar para converter datas de forma segura sem problemas de fuso horário
@@ -63,37 +63,35 @@
     document.getElementById('dados-view').style.display = 'none';
     document.getElementById('loader-dados').style.display = 'flex';
 
-    // Chama o servidor para bater no BigQuery
+    // Chama o servidor para bater no BigQuery com a versão de Alta Performance
     google.script.run
       .withSuccessHandler(renderizarTabelaDados)
       .withFailureHandler(function(err){
          document.getElementById('loader-dados').innerHTML = `<div class="alert alert-danger shadow-sm">❌ Erro na extração do banco de dados: ${err}</div>`;
       })
-      .extraiBaseDetalhada(dtIni, dtFim);
+      .extraiBaseDetalhadaAltaPerformance(dtIni, dtFim);
   }
 
-  function renderizarTabelaDados(dados) {
+  function renderizarTabelaDados(response) {
     document.getElementById('loader-dados').style.display = 'none';
     document.getElementById('dados-view').style.display = 'block';
 
-    if(!dados || dados.length === 0) {
+    if(!response || response.total === 0) {
       document.getElementById('tbody-dados').innerHTML = '<tr><td colspan="9" class="text-center py-5 text-muted">Nenhum dado encontrado para o período selecionado.</td></tr>';
       document.getElementById('lbl-total-linhas').innerText = '(0 linhas)';
-      baseDetalhadaCache = [];
+      csvCache = "";
       return;
     }
 
-    // Salva na variável que será usada caso o usuário clique em "Baixar CSV"
-    baseDetalhadaCache = dados;
-    document.getElementById('lbl-total-linhas').innerText = `(${dados.length.toLocaleString('pt-BR')} linhas carregadas na memória)`;
+    // Salva a string crua do CSV gerada pelo Backend na memória do navegador
+    csvCache = response.csvContent;
+    document.getElementById('lbl-total-linhas').innerText = `(${response.total.toLocaleString('pt-BR')} linhas prontas para exportação)`;
 
     let html = '';
     
-    // TRAVA VISUAL (Renderizar máximo de 500 linhas para não congelar o HTML)
-    let limiteRender = Math.min(dados.length, 500); 
-    
-    for(let i = 0; i < limiteRender; i++) {
-      let r = dados[i];
+    // A renderização utiliza o array de pré-visualização que o servidor mandou (máx 500 linhas)
+    for(let i = 0; i < response.preview.length; i++) {
+      let r = response.preview[i];
       let tVendaTxt = r.tipo_venda === 'null' || !r.tipo_venda ? '-' : r.tipo_venda;
       let gVendaTxt = r.grupo_venda === 'null' || !r.grupo_venda ? '-' : r.grupo_venda;
       let bsatTxt = r.bsat_score === 'null' || !r.bsat_score ? '-' : r.bsat_score;
@@ -111,50 +109,37 @@
       </tr>`;
     }
     
-    if(dados.length > limiteRender) {
-      html += `<tr><td colspan="9" class="text-center py-3 text-muted fw-bold" style="background: var(--bg);">Tabela de pré-visualização limitada a ${limiteRender} linhas. Clique em "Baixar CSV" para extrair todas as ${dados.length.toLocaleString('pt-BR')} interações.</td></tr>`;
+    if(response.total > response.preview.length) {
+      html += `<tr><td colspan="9" class="text-center py-3 text-muted fw-bold" style="background: var(--bg);">Tabela de pré-visualização limitada a ${response.preview.length} linhas. Clique em "Baixar CSV" para extrair todas as ${response.total.toLocaleString('pt-BR')} interações.</td></tr>`;
     }
 
     document.getElementById('tbody-dados').innerHTML = html;
   }
 
   function exportarCSV() {
-    if(baseDetalhadaCache.length === 0) {
+    if(!csvCache || csvCache.trim() === "") {
       alert("Não há dados carregados para exportar. Por favor, realize uma busca primeiro.");
       return;
     }
 
-    // Montando o arquivo CSV Virtual
-    let csvRows = [];
-    // Cabeçalhos Fixos
-    csvRows.push("conversation_id,conversation_start_time_br,id_pedido_filho,retido,use_case,is_llm_conversation,bsat_score,tipo_venda,grupo_venda");
+    let fileName = `Base_Detalhada_UltimateBot_${document.getElementById('dd-inicio').value}_ate_${document.getElementById('dd-fim').value}.csv`;
     
-    baseDetalhadaCache.forEach(function(r) {
-        // Tratamento para evitar que virgulas ou quebras de linha nas strings quebrem as colunas do CSV
-        let rowArray = [
-          `"${r.conversation_id || ''}"`,
-          `"${r.conversation_start_time_br || ''}"`,
-          `"${r.id_pedido_filho || ''}"`,
-          `"${r.retido || ''}"`,
-          `"${r.use_case || ''}"`,
-          `"${r.is_llm_conversation || ''}"`,
-          `"${r.bsat_score || ''}"`,
-          `"${r.tipo_venda || ''}"`,
-          `"${r.grupo_venda || ''}"`
-        ];
-        csvRows.push(rowArray.join(","));
-    });
-
-    let csvContent = csvRows.join("\n");
-    let blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' }); // \uFEFF Força o Excel a entender acentuação (BOM)
-    let url = URL.createObjectURL(blob);
+    // Converte a string pré-processada pelo backend em um arquivo físico na memória local do navegador
+    let blob = new Blob(["\uFEFF" + csvCache], { type: 'text/csv;charset=utf-8;' }); // \uFEFF Força o Excel a entender a acentuação
     
+    // Processo de ancoragem e clique dinâmico para forçar o download
     let link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `Base_Detalhada_UltimateBot_${document.getElementById('dd-inicio').value}_ate_${document.getElementById('dd-fim').value}.csv`);
-    
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    if (link.download !== undefined) { 
+        let url = URL.createObjectURL(blob);
+        link.setAttribute("href", url);
+        link.setAttribute("download", fileName);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url); // Limpa a RAM após baixar
+    } else {
+        alert("O seu navegador não suporta downloads dinâmicos. Habilite essa permissão.");
+    }
   }
 </script>
