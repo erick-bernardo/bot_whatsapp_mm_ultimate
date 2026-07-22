@@ -25,6 +25,7 @@
 
     renderizarKPIsMacro();
     renderizarGraficoEvolucao();
+    renderizarHeatmapGerencial(); // NOVO GATILHO DO HEATMAP
   }
 
   function calcularResumo(dataset) {
@@ -59,7 +60,10 @@
     document.getElementById('btn-chart-month').classList.remove('active');
     document.getElementById('btn-chart-' + tipo).classList.add('active');
     chartGranularity = tipo;
+    
+    // Atualiza ambos (Gráfico e Heatmap) quando clica no botão de Dia/Sem/Mes
     renderizarGraficoEvolucao();
+    renderizarHeatmapGerencial();
   }
 
   function renderizarGraficoEvolucao() {
@@ -83,7 +87,6 @@
 
     let chavesOrdernadas = Object.keys(agrupamento).sort();
     
-    // Tabela de Dados: Adicionamos a "Linha Invisível do Meio" para ancorar a anotação
     let chartData = [[
       'Período', 
       'Volume HA',
@@ -94,7 +97,7 @@
 
     chavesOrdernadas.forEach(c => {
       let vol = agrupamento[c].volHA;
-      let volMeio = vol > 0 ? vol / 2 : null; // Ponto invisível perfeitamente no meio da barra
+      let volMeio = vol > 0 ? vol / 2 : null;
       let annotationVol = vol > 0 ? vol.toLocaleString('pt-BR') : null;
 
       let tx = vol > 0 ? (agrupamento[c].retHA / vol) : 0;
@@ -103,7 +106,6 @@
       let txBsat = agrupamento[c].resp > 0 ? (agrupamento[c].prom / agrupamento[c].resp) : null;
       let annotationBsat = txBsat !== null ? (txBsat * 100).toFixed(1) + '%' : null;
 
-      // Inserindo os dados: O volume real gera a barra, o volumeMeio segura o rótulo
       chartData.push([c, vol, volMeio, annotationVol, tx, annotationRet, txBsat, annotationBsat]);
     });
 
@@ -112,18 +114,15 @@
     let dataTable = google.visualization.arrayToDataTable(chartData);
     let formatter = new google.visualization.NumberFormat({pattern: '#,##0.0%'});
     
-    // Formatação dos eixos de % que agora estão nos índices 4 e 6
     formatter.format(dataTable, 4);
     formatter.format(dataTable, 6);
 
     let options = {
       legend: { position: 'top', textStyle: {color: '#555566'} },
-      // O 'transparent' na posição 1 faz a nossa linha do meio desaparecer
       colors: ['#E5E5EA', 'transparent', '#FF6B00', '#9999AA'],
       seriesType: 'bars',
       series: { 
          0: { type: 'bars', targetAxisIndex: 0 },
-         // Série Fantasma (Invisível, Inativa para o Mouse, Fora da Legenda, servindo só de Cabide para a Anotação)
          1: { type: 'line', targetAxisIndex: 0, lineWidth: 0, pointSize: 0, visibleInLegend: false, enableInteractivity: false, annotations: { textStyle: { color: '#555566' } } },
          2: { type: 'line', targetAxisIndex: 1, lineWidth: 3, pointSize: 5 },
          3: { type: 'line', targetAxisIndex: 1, lineWidth: 2, pointSize: 4, lineDashStyle: [4, 4] } 
@@ -135,7 +134,6 @@
       hAxis: { textStyle: { color: '#9999AA' } },
       chartArea: { width: '85%', height: '60%', top: 40 }, 
       backgroundColor: 'transparent',
-      // alwaysOutside volta a ser true para que a retenção e o BSAT fiquem elegantes acima dos pontos, e o do Volume obedeça a linha invisível
       annotations: { alwaysOutside: true, textStyle: { fontSize: 11, bold: true }, stem: { color: 'transparent' } }
     };
 
@@ -148,30 +146,22 @@
 
     google.visualization.events.addListener(chart, 'select', function () {
       let sel = chart.getSelection();
-      
-      // Se clicou em um item de legenda
       if (sel.length > 0 && sel[0].row === null) {
         let col = sel[0].column;
 
         if (columns[col] == col) {
-          // Oculta a linha principal clicada
           columns[col] = {
             label: dataTable.getColumnLabel(col),
             type: dataTable.getColumnType(col),
             calc: function () { return null; }
           };
-          
-          // Se ocultou o Volume HA (coluna 1), oculta também a série fantasma (col 2) e o label fantasma (col 3)
           if (col === 1) {
              columns[2] = { label: dataTable.getColumnLabel(2), type: dataTable.getColumnType(2), calc: function () { return null; } };
              columns[3] = { label: dataTable.getColumnLabel(3), type: dataTable.getColumnType(3), role: 'annotation', calc: function () { return null; } };
           }
-          // Se ocultou a Retenção (col 4) oculta sua label (col 5)
           if (col === 4) columns[5] = { label: dataTable.getColumnLabel(5), type: dataTable.getColumnType(5), role: 'annotation', calc: function () { return null; } };
-          // Se ocultou o BSAT (col 6) oculta sua label (col 7)
           if (col === 6) columns[7] = { label: dataTable.getColumnLabel(7), type: dataTable.getColumnType(7), role: 'annotation', calc: function () { return null; } };
         } else {
-          // Restaura todos ao natural se for ativado
           columns[col] = col;
           if (col === 1) { columns[2] = 2; columns[3] = 3; }
           if (col === 4) columns[5] = 5;
@@ -187,6 +177,115 @@
     let view = new google.visualization.DataView(dataTable);
     view.setColumns(columns);
     chart.draw(view, options);
+  }
+
+  // ==============================================================================
+  // NOVA INTELIGÊNCIA: RENDERIZAÇÃO DO HEATMAP GERENCIAL POR LINHA
+  // ==============================================================================
+  function renderizarHeatmapGerencial() {
+    let periodosSet = new Set();
+    let useCasesSet = new Set();
+    let rawData = {}; 
+
+    // Extração e agrupamento dos dados
+    dadosAtuais.forEach(row => {
+      if(row.horario_atendimento !== 'Dentro do horário Atendimento') return;
+
+      let chavePeriodo = row.conversation_start_date_br; 
+      if (chartGranularity === 'week') chavePeriodo = row.conversation_start_week;
+      if (chartGranularity === 'month') chavePeriodo = row.conversation_start_month;
+
+      let uc = row.use_case || 'Não Identificado';
+
+      periodosSet.add(chavePeriodo);
+      useCasesSet.add(uc);
+
+      if (!rawData[uc]) rawData[uc] = {};
+      if (!rawData[uc][chavePeriodo]) rawData[uc][chavePeriodo] = { volHA: 0, retHA: 0 };
+
+      let conv = parseInt(row.qtd_conversas) || 0;
+      rawData[uc][chavePeriodo].volHA += conv;
+      if (row.retido === 'Sim') rawData[uc][chavePeriodo].retHA += conv;
+    });
+
+    let periodosOrd = Array.from(periodosSet).sort();
+    let useCasesOrd = Array.from(useCasesSet).sort();
+
+    if (periodosOrd.length === 0 || useCasesOrd.length === 0) {
+       document.getElementById('heatmap-gerencial').innerHTML = '<tr><td class="text-center py-4 text-muted">Sem dados HA no período para plotar a matriz.</td></tr>';
+       return;
+    }
+
+    // Cabecalho Dinâmico (Travado à esquerda via CSS inline z-index)
+    let html = '<thead><tr><th class="row-header text-start ps-3" style="min-width: 200px; position: sticky; left: 0; z-index: 3;">ASSUNTO (USE CASE)</th>';
+    periodosOrd.forEach(p => html += `<th style="min-width: 80px;">${p}</th>`);
+    html += '</tr></thead><tbody>';
+
+    // Construção linha por linha
+    useCasesOrd.forEach(uc => {
+       let rowData = rawData[uc];
+       let sumVol = 0, sumRetNum = 0, sumRetDen = 0;
+       let maxRet = 0, minRet = 1;
+
+       // 1º Passo: Encontrar a Média, o Mínimo e Máximo EXCLUSIVO desta linha
+       periodosOrd.forEach(p => {
+          if (rowData && rowData[p] && rowData[p].volHA > 0) {
+             let v = rowData[p].volHA;
+             let r = rowData[p].retHA;
+             let ret = r / v;
+             
+             sumVol += v;
+             sumRetNum += r;
+             sumRetDen += v;
+             
+             maxRet = Math.max(maxRet, ret);
+             minRet = Math.min(minRet, ret);
+          }
+       });
+
+       // Se a linha (Assunto) não teve volume nenhum no período analisado, esconde
+       if (sumVol === 0) return; 
+
+       let avgRet = sumRetDen > 0 ? sumRetNum / sumRetDen : 0;
+       // Travas matemáticas para evitar divisão por 0 caso as taxas sejam idênticas todos os dias
+       if (maxRet === avgRet) maxRet = avgRet + 0.01;
+       if (minRet === avgRet) minRet = avgRet - 0.01;
+
+       // O header da linha acompanha o scroll lateral
+       html += `<tr><td class="row-header text-start ps-3 text-capitalize fw-bold" style="position: sticky; left: 0; z-index: 1;">${uc}</td>`;
+
+       // 2º Passo: Renderizar as células comparando com a média da própria linha
+       periodosOrd.forEach(p => {
+          let val = 0; let txt = '-'; let bg = 'transparent';
+          
+          if (rowData && rowData[p] && rowData[p].volHA > 0) {
+             let v = rowData[p].volHA;
+             let r = rowData[p].retHA;
+             val = r / v;
+             txt = `<div>${(val*100).toFixed(0)}%</div><div class="heatmap-vol-sub">(${v.toLocaleString('pt-BR')})</div>`;
+
+             // Lógica divergente horizontal
+             if (val <= 0.40) {
+               bg = `rgba(153, 27, 27, 0.85)`; // Exceção trágica chumbada vermelha escura
+             } else if (val >= avgRet) {
+               let ratio = (val - avgRet) / (maxRet - avgRet);
+               if (ratio > 1) ratio = 1;
+               let alpha = 0.2 + (ratio * 0.65);
+               bg = `rgba(21, 128, 61, ${alpha})`; // Degradê Verde (Acima da sua própria média)
+             } else {
+               let ratio = (avgRet - val) / (avgRet - minRet);
+               if (ratio > 1) ratio = 1;
+               let alpha = 0.2 + (ratio * 0.55);
+               bg = `rgba(220, 38, 38, ${alpha})`; // Degradê Vermelho (Abaixo da sua própria média)
+             }
+          }
+          html += `<td style="background-color: ${bg};">${txt}</td>`;
+       });
+       html += '</tr>';
+    });
+
+    html += '</tbody>';
+    document.getElementById('heatmap-gerencial').innerHTML = html;
   }
 
   function getSemanaAnterior(semanaFormat) {
