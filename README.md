@@ -1,9 +1,5 @@
 # bot_whatsapp_mm_ultimate
 
-Aqui está a documentação estruturada do seu dashboard. Ele foi construído utilizando Google Apps Script (GAS) como um Web App, estruturado de forma altamente modular (separando o front-end do back-end) e integrado ao Google BigQuery para processamento robusto de dados.
-
-Abaixo, detalho a arquitetura, a responsabilidade de cada arquivo e o fluxo de informações para facilitar o entendimento de qualquer usuário ou desenvolvedor.
-
 ---
 
 ## 🏗️ Visão Geral da Arquitetura
